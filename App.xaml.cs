@@ -1,0 +1,225 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Windows;
+using ClipNest.Services;
+using Forms = System.Windows.Forms;
+
+namespace ClipNest;
+
+public partial class App : Application
+{
+    private const string MutexName = "ClipNest.SingleInstance.v1";
+    private const string ShowEventName = "ClipNest.ShowPopup.v1";
+    private const string ExitEventName = "ClipNest.Exit.v1";
+
+    private Mutex? _mutex;
+    private EventWaitHandle? _showEvent;
+    private Forms.NotifyIcon? _tray;
+    private Forms.ToolStripMenuItem? _pauseItem;
+    private SettingsWindow? _settingsWindow;
+
+    public static AppSettings Settings { get; private set; } = null!;
+    public static Storage Storage { get; private set; } = null!;
+    public static ClipboardMonitor Monitor { get; private set; } = null!;
+    public static KeyboardHook Hook { get; private set; } = null!;
+    public static new App Current => (App)Application.Current;
+
+    private MainWindow _popup = null!;
+
+    protected override void OnStartup(StartupEventArgs e)
+    {
+        base.OnStartup(e);
+
+        if (e.Args.Contains("--exit"))
+        {
+            try { EventWaitHandle.OpenExisting(ExitEventName).Set(); } catch { }
+            Shutdown();
+            return;
+        }
+
+        _mutex = new Mutex(true, MutexName, out bool first);
+        if (!first)
+        {
+            // another copy is running: ask it to show the history and quit
+            try { EventWaitHandle.OpenExisting(ShowEventName).Set(); } catch { }
+            Shutdown();
+            return;
+        }
+
+        var dataDir = ResolveDataDir();
+        Directory.CreateDirectory(dataDir);
+        Log.FilePath = Path.Combine(dataDir, "clipnest.log");
+        DispatcherUnhandledException += (_, ex) =>
+        {
+            Log.Write("unhandled: " + ex.Exception);
+            ex.Handled = true;
+        };
+
+        Settings = AppSettings.Load(dataDir);
+        Theme.Apply(Settings.Theme);
+
+        Secrets.Init(dataDir);
+        Storage = new Storage(dataDir);
+        Storage.Prune(Settings.MaxItems, Settings.MaxAgeDays);
+
+        Monitor = new ClipboardMonitor(Storage, Settings);
+        Hook = new KeyboardHook(Dispatcher) { Enabled = Settings.ReplaceWinV };
+        Hook.WinVPressed += ShowPopup;
+
+        _popup = new MainWindow();
+        _popup.Warmup();
+        Monitor.ItemCaptured += _popup.OnItemCaptured;
+
+        Autostart.Set(Settings.Autostart);
+        CreateTray();
+        ListenForSecondInstance();
+
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += (_, _) =>
+        {
+            if (Settings.Theme == ThemeMode.System) Dispatcher.BeginInvoke(() => Theme.Apply(ThemeMode.System));
+        };
+
+        var prof = Array.IndexOf(e.Args, "--profile");
+        if (prof >= 0 && prof + 1 < e.Args.Length)
+        {
+            Snapshots.Profile(_popup, e.Args[prof + 1]);
+            return;
+        }
+
+        var hk = Array.IndexOf(e.Args, "--hooktest");
+        if (hk >= 0 && hk + 1 < e.Args.Length)
+        {
+            // dev check of the hook thread: record each intercepted Win+V instead of opening the popup
+            var marker = e.Args[hk + 1];
+            Hook.WinVPressed -= ShowPopup;
+            Hook.WinVPressed += () => File.AppendAllText(marker, $"winv {Environment.TickCount64}{Environment.NewLine}");
+            Hook.Enabled = true;
+            File.WriteAllText(marker, $"ready installed={Hook.IsInstalled}{Environment.NewLine}");
+            return;
+        }
+
+        var scr = Array.IndexOf(e.Args, "--screencheck");
+        if (scr >= 0 && scr + 1 < e.Args.Length)
+        {
+            Snapshots.ScreenCheck(_popup, e.Args[scr + 1]);
+            return;
+        }
+
+        var snap = Array.IndexOf(e.Args, "--snapshot");
+        if (snap >= 0 && snap + 1 < e.Args.Length)
+        {
+            Snapshots.Run(_popup, e.Args[snap + 1]);
+            return;
+        }
+
+        if (!Settings.ShownWelcome)
+        {
+            Settings.ShownWelcome = true;
+            Settings.Save();
+            _tray!.ShowBalloonTip(5000, "ClipNest запущен",
+                Settings.ReplaceWinV ? "Нажмите Win+V, чтобы открыть историю буфера обмена." : "Откройте историю через значок в трее.",
+                Forms.ToolTipIcon.None);
+        }
+        else if (!e.Args.Contains("--tray"))
+        {
+            ShowPopup();
+        }
+    }
+
+    private static string ResolveDataDir()
+    {
+        var exeDir = AppContext.BaseDirectory;
+        if (File.Exists(Path.Combine(exeDir, "portable.txt"))) return Path.Combine(exeDir, "data");
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClipNest");
+    }
+
+    private void ListenForSecondInstance()
+    {
+        _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
+        var exitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ExitEventName);
+        var t = new Thread(() =>
+        {
+            while (true)
+            {
+                if (WaitHandle.WaitAny(new WaitHandle[] { _showEvent, exitEvent }) == 1)
+                {
+                    Dispatcher.BeginInvoke(Quit);
+                    return;
+                }
+                Dispatcher.BeginInvoke(ShowPopup);
+            }
+        }) { IsBackground = true, Name = "ClipNest.ShowListener" };
+        t.Start();
+    }
+
+    private void CreateTray()
+    {
+        System.Drawing.Icon icon;
+        var res = GetResourceStream(new Uri("pack://application:,,,/Assets/clipnest.ico"));
+        using (var s = res.Stream) icon = new System.Drawing.Icon(s, Forms.SystemInformation.SmallIconSize);
+
+        var menu = new Forms.ContextMenuStrip();
+        menu.Items.Add("Открыть историю", null, (_, _) => ShowPopup());
+        _pauseItem = new Forms.ToolStripMenuItem("Приостановить запись", null, (_, _) => TogglePause());
+        menu.Items.Add(_pauseItem);
+        menu.Items.Add("Настройки…", null, (_, _) => OpenSettings());
+        menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add("Выход", null, (_, _) => Quit());
+
+        _tray = new Forms.NotifyIcon
+        {
+            Icon = icon,
+            Text = "ClipNest — история буфера обмена",
+            ContextMenuStrip = menu,
+            Visible = true,
+        };
+        _tray.MouseClick += (_, ev) =>
+        {
+            if (ev.Button == Forms.MouseButtons.Left) ShowPopup();
+        };
+    }
+
+    public void TogglePause()
+    {
+        Monitor.Paused = !Monitor.Paused;
+        if (_pauseItem is not null) _pauseItem.Checked = Monitor.Paused;
+        if (_tray is not null) _tray.Text = Monitor.Paused ? "ClipNest — запись приостановлена" : "ClipNest — история буфера обмена";
+        _popup.UpdatePausedState();
+    }
+
+    public void ShowPopup() => _popup.ShowPopup();
+
+    public void OpenSettings()
+    {
+        if (_settingsWindow is { IsLoaded: true })
+        {
+            _settingsWindow.Activate();
+            return;
+        }
+        _settingsWindow = new SettingsWindow();
+        _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+        _settingsWindow.Show();
+        _settingsWindow.Activate();
+    }
+
+    /// <summary>Re-applies settings after the settings window saves them.</summary>
+    public void ApplySettings()
+    {
+        Settings.Save();
+        Hook.Enabled = Settings.ReplaceWinV;
+        Autostart.Set(Settings.Autostart);
+        Theme.Apply(Settings.Theme);
+        Storage.Prune(Settings.MaxItems, Settings.MaxAgeDays);
+    }
+
+    public void Quit()
+    {
+        if (_tray is not null) { _tray.Visible = false; _tray.Dispose(); }
+        Hook?.Dispose();
+        Monitor?.Dispose();
+        Storage?.Dispose();
+        Shutdown();
+    }
+}

@@ -1,0 +1,17 @@
+<Application x:Class="ClipNest.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnExplicitShutdown">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- index 0 is swapped by Theme.Apply -->
+                <ResourceDictionary Source="Themes/Dark.xaml"/>
+                <ResourceDictionary Source="Themes/Controls.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <SolidColorBrush x:Key="Accent" Color="#4F7CFF"/>
+            <SolidColorBrush x:Key="AccentSubtle" Color="#404F7CFF"/>
+            <SolidColorBrush x:Key="AccentText" Color="#8FA9FF"/>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

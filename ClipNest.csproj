@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>ClipNest</AssemblyName>
+    <RootNamespace>ClipNest</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\clipnest.ico</ApplicationIcon>
+    <Version>1.0.0</Version>
+    <Product>ClipNest</Product>
+    <Description>Менеджер буфера обмена без лимитов</Description>
+    <SatelliteResourceLanguages>ru;en</SatelliteResourceLanguages>
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+    <!-- precompiled code: no JIT pause on the first Win+V after startup -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <TieredPGO>true</TieredPGO>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\clipnest.ico" />
+  </ItemGroup>
+
+</Project>
