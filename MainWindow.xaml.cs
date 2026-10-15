@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private ClipFilter _filter = ClipFilter.All;
     private bool _hasMore;
     private bool _menuOpen;
+    private long _shownAt;
     private IntPtr _prevForeground;
     private readonly RadioButton[] _chips;
     private readonly OutsideClickWatcher _outside;
@@ -48,13 +49,13 @@ public partial class MainWindow : Window
         _searchTimer = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(90) };
         _searchTimer.Tick += (_, _) => { _searchTimer.Stop(); Reload(); };
 
-        Deactivated += (_, _) => { if (!_menuOpen && !KeepOpen) HidePopup(); };
+        Deactivated += (_, _) => { if (!_menuOpen && !KeepOpen) OnFocusLost(IntPtr.Zero); };
         // Deactivated never comes if Windows didn't really give us the foreground (or took it back quietly):
         // then a click on the desktop or the Start menu left the popup open until it was clicked again.
         // So also close on any click outside and on any other app taking the foreground.
         _outside = new OutsideClickWatcher(Dispatcher);
         _outside.OutsideClick += () => { if (!KeepOpen) HidePopup(); };
-        _foregroundProc = (_, _, hwnd, _, _, _, _) => { if (!KeepOpen && hwnd != IntPtr.Zero) HidePopup(); };
+        _foregroundProc = (_, _, hwnd, _, _, _, _) => { if (!KeepOpen && hwnd != IntPtr.Zero) OnFocusLost(hwnd); };
         SourceInitialized += (_, _) => SetupNativeWindow();
         List.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(OnListScroll));
     }
@@ -105,6 +106,7 @@ public partial class MainWindow : Window
         UpdatePausedState();
 
         PositionNearCaret();
+        _shownAt = Environment.TickCount64;
         Body.Opacity = 0;
         Show();
         ForceForeground();
@@ -134,6 +136,39 @@ public partial class MainWindow : Window
         // drop the items (and their thumbnails) while hidden; the next open reloads anyway
         _items.Clear();
         UpdateDust();
+    }
+
+    /// <summary>Right after Win+V, Windows sometimes hands the foreground to something else for a moment
+    /// (seen with a text field focused: the text input host reacts to the Win key). Closing then made it look
+    /// as if the popup never opened, so during the first moments the popup takes the foreground back instead.
+    /// A real click outside always closes it (see <see cref="OutsideClickWatcher"/>).</summary>
+    private void OnFocusLost(IntPtr thief)
+    {
+        if (!IsVisible) return;
+        if (Environment.TickCount64 - _shownAt < 500)
+        {
+            Log.Write("focus taken right after opening by " + Describe(thief != IntPtr.Zero ? thief : Native.GetForegroundWindow()) + "; taking it back");
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+            {
+                if (!IsVisible) return;
+                ForceForeground();
+                Activate();
+                Keyboard.Focus(Search);
+            });
+            return;
+        }
+        HidePopup();
+    }
+
+    private static string Describe(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return "(none)";
+        var sb = new StringBuilder(128);
+        Native.GetClassName(hwnd, sb, sb.Capacity);
+        Native.GetWindowThreadProcessId(hwnd, out var pid);
+        string name = "?";
+        try { using var p = Process.GetProcessById((int)pid); name = p.ProcessName; } catch { }
+        return $"{name} [{sb}]";
     }
 
     private void WatchOutside(bool on)
