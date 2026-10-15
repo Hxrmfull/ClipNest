@@ -4,7 +4,7 @@
         xmlns:m="clr-namespace:ClipNest.Models"
         xmlns:local="clr-namespace:ClipNest"
         Title="ClipNest"
-        Width="420" Height="592"
+        Width="420" Height="600"
         ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" ShowActivated="True"
         WindowStartupLocation="Manual"
         Background="{DynamicResource WindowBg}"
@@ -88,7 +88,7 @@
                             Background="{DynamicResource Checker}" Visibility="Collapsed" Padding="0"
                             local:RoundedClip.Radius="8">
                         <Grid>
-                            <Image x:Name="img" Source="{Binding Thumbnail, IsAsync=True}" MaxHeight="150" Stretch="Uniform"
+                            <Image x:Name="img" Source="{Binding Thumbnail}" MaxHeight="150" Stretch="Uniform"
                                    StretchDirection="DownOnly" RenderOptions.BitmapScalingMode="HighQuality"
                                    ToolTipService.InitialShowDelay="500">
                                 <Image.ToolTip>
@@ -126,7 +126,8 @@
                            Foreground="{DynamicResource AccentText}" HorizontalAlignment="Right" VerticalAlignment="Top"
                            Margin="0,2,2,0" Visibility="Collapsed"/>
 
-                <Border x:Name="actions" Background="{DynamicResource CardBg}" CornerRadius="7" BorderBrush="{DynamicResource Stroke}"
+                <!-- spans both rows so it never adds to the height of a one-line card: shown on hover, it must not shift the layout -->
+                <Border x:Name="actions" Grid.RowSpan="2" Background="{DynamicResource CardBg}" CornerRadius="7" BorderBrush="{DynamicResource Stroke}"
                         BorderThickness="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-5,-4,0"
                         Visibility="Collapsed">
                     <StackPanel Orientation="Horizontal">
@@ -213,7 +214,7 @@
         </DataTemplate>
     </Window.Resources>
 
-    <Border x:Name="Shell" Background="{DynamicResource SurfaceBg}">
+    <Border x:Name="Shell" Background="{DynamicResource SurfaceBg}" MouseLeftButtonDown="Shell_MouseLeftButtonDown">
         <Grid x:Name="Body">
             <Grid.RenderTransform>
                 <TranslateTransform x:Name="ContentShift"/>
@@ -221,12 +222,19 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
+            <!-- grab strip: the window can be dragged by it (and by any empty spot outside the list) -->
+            <Border x:Name="Grip" Height="20" Background="Transparent" Cursor="SizeAll">
+                <Border Width="36" Height="4" CornerRadius="2" Background="{DynamicResource StrokeStrong}"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+
             <!-- search -->
-            <Border Margin="12,12,12,10" Background="{DynamicResource InputBg}" CornerRadius="8"
+            <Border x:Name="SearchBox" Grid.Row="1" Margin="12,0,12,10" Background="{DynamicResource InputBg}" CornerRadius="8"
                     BorderBrush="{DynamicResource Stroke}" BorderThickness="1" Padding="10,0,4,0" Height="40">
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -260,7 +268,7 @@
             </Border>
 
             <!-- filters -->
-            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="12,0,12,10">
+            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="12,0,12,10">
                 <RadioButton x:Name="FAll" Style="{StaticResource Chip}" Content="Все" IsChecked="True" Checked="Filter_Checked"/>
                 <RadioButton x:Name="FText" Style="{StaticResource Chip}" Content="Текст" Checked="Filter_Checked"/>
                 <RadioButton x:Name="FLinks" Style="{StaticResource Chip}" Content="Ссылки" Checked="Filter_Checked"/>
@@ -271,7 +279,7 @@
             </StackPanel>
 
             <!-- history -->
-            <ListBox x:Name="List" Grid.Row="2" Background="Transparent" BorderThickness="0" Padding="12,0,4,4"
+            <ListBox x:Name="List" Grid.Row="3" Background="Transparent" BorderThickness="0" Padding="12,0,4,4"
                      ItemContainerStyle="{StaticResource ClipItemStyle}" ItemTemplate="{StaticResource ClipTemplate}"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
@@ -284,7 +292,7 @@
                 </ListBox.ContextMenu>
             </ListBox>
 
-            <StackPanel x:Name="EmptyState" Grid.Row="2" VerticalAlignment="Center" HorizontalAlignment="Center"
+            <StackPanel x:Name="EmptyState" Grid.Row="3" VerticalAlignment="Center" HorizontalAlignment="Center"
                         Margin="30,0,30,40" Visibility="Collapsed" IsHitTestVisible="False">
                 <TextBlock x:Name="EmptyGlyph" Text="&#xE77F;" FontFamily="{StaticResource IconFont}" FontSize="34"
                            Foreground="{DynamicResource TextTertiary}" HorizontalAlignment="Center"/>
@@ -296,7 +304,7 @@
             </StackPanel>
 
             <!-- footer -->
-            <Border Grid.Row="3" BorderBrush="{DynamicResource Stroke}" BorderThickness="0,1,0,0" Padding="14,8,12,9">
+            <Border Grid.Row="4" BorderBrush="{DynamicResource Stroke}" BorderThickness="0,1,0,0" Padding="14,8,12,9">
                 <Grid>
                     <TextBlock x:Name="CountText" FontSize="11" Foreground="{DynamicResource TextTertiary}" VerticalAlignment="Center"/>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -48,7 +49,7 @@ public partial class App : Application
             return;
         }
 
-        var dataDir = ResolveDataDir();
+        var dataDir = DataLocation.Resolve();
         Directory.CreateDirectory(dataDir);
         Log.FilePath = Path.Combine(dataDir, "clipnest.log");
         DispatcherUnhandledException += (_, ex) =>
@@ -122,17 +123,14 @@ public partial class App : Application
                 Settings.ReplaceWinV ? "Нажмите Win+V, чтобы открыть историю буфера обмена." : "Откройте историю через значок в трее.",
                 Forms.ToolTipIcon.None);
         }
+        else if (e.Args.Contains("--settings"))
+        {
+            OpenSettings();
+        }
         else if (!e.Args.Contains("--tray"))
         {
             ShowPopup();
         }
-    }
-
-    private static string ResolveDataDir()
-    {
-        var exeDir = AppContext.BaseDirectory;
-        if (File.Exists(Path.Combine(exeDir, "portable.txt"))) return Path.Combine(exeDir, "data");
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClipNest");
     }
 
     private void ListenForSecondInstance()
@@ -212,6 +210,49 @@ public partial class App : Application
         Autostart.Set(Settings.Autostart);
         Theme.Apply(Settings.Theme);
         Storage.Prune(Settings.MaxItems, Settings.MaxAgeDays);
+    }
+
+    /// <summary>Switches to another data folder: closes the database, moves the data there
+    /// (unless the folder already has a ClipNest history, which is then used as is) and restarts.</summary>
+    public void RelocateData(string newDir)
+    {
+        var oldDir = Storage.DataDir;
+        bool move = !DataLocation.HasHistory(newDir);
+        Settings.Save();
+        _popup.HidePopup();
+        Monitor.ItemCaptured -= _popup.OnItemCaptured;
+        Hook.Dispose();
+        Monitor.Dispose();
+        Storage.Dispose();
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); // pooled connections would keep history.db open
+        var log = Log.FilePath;
+        Log.FilePath = null;
+
+        try
+        {
+            if (move) DataLocation.Move(oldDir, newDir);
+            DataLocation.CustomDir = newDir;
+        }
+        catch (Exception ex)
+        {
+            Log.FilePath = log;
+            Log.Write("relocate: " + ex);
+            MessageBox.Show($"Не удалось перенести данные в «{newDir}»:\n{ex.Message}\n\nИстория осталась в «{oldDir}».",
+                "ClipNest", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        Restart("--settings");
+    }
+
+    private void Restart(string args)
+    {
+        if (_tray is not null) { _tray.Visible = false; _tray.Dispose(); _tray = null; }
+        // the new copy must not find our single-instance mutex
+        try { _mutex?.ReleaseMutex(); } catch { }
+        _mutex?.Dispose();
+        _mutex = null;
+        try { if (Environment.ProcessPath is { } exe) Process.Start(exe, args); }
+        catch (Exception ex) { Log.Write("restart: " + ex.Message); }
+        Shutdown();
     }
 
     public void Quit()

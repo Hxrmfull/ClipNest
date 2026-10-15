@@ -178,10 +178,30 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock x:Name="Stats" Text="…"/>
-                                <TextBlock x:Name="DataPath" Style="{StaticResource Hint}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+                                <TextBlock Style="{StaticResource Hint}" Text="Записи, картинки и настройки."/>
                             </StackPanel>
                             <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="Открыть папку"
                                     Click="OpenFolder_Click" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                        </Grid>
+                        <Border Style="{StaticResource Divider}"/>
+                        <Grid Style="{StaticResource Row}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Папка с данными"/>
+                                <TextBlock x:Name="DataPath" Style="{StaticResource Hint}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+                                <TextBlock x:Name="DataHint" Style="{StaticResource Hint}"
+                                           Text="История будет перенесена в новую папку, ClipNest перезапустится."/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                                <Button x:Name="ResetFolder" Style="{StaticResource SecondaryButton}" Content="По умолчанию"
+                                        Click="ResetFolder_Click" Margin="0,0,8,0"
+                                        ToolTip="Вернуть в Документы\ClipNest"/>
+                                <Button x:Name="ChangeFolder" Style="{StaticResource SecondaryButton}" Content="Изменить…"
+                                        Click="ChangeFolder_Click"/>
+                            </StackPanel>
                         </Grid>
                         <Border Style="{StaticResource Divider}"/>
                         <Grid Style="{StaticResource Row}">

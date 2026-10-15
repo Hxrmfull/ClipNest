@@ -32,6 +32,9 @@ public partial class MainWindow : Window
     private bool _menuOpen;
     private IntPtr _prevForeground;
     private readonly RadioButton[] _chips;
+    private readonly OutsideClickWatcher _outside;
+    private readonly Native.WinEventProc _foregroundProc; // kept alive for the GC
+    private IntPtr _foregroundHook;
 
     /// <summary>Don't hide on focus loss (snapshot / profile mode).</summary>
     public bool KeepOpen { get; set; }
@@ -46,6 +49,12 @@ public partial class MainWindow : Window
         _searchTimer.Tick += (_, _) => { _searchTimer.Stop(); Reload(); };
 
         Deactivated += (_, _) => { if (!_menuOpen && !KeepOpen) HidePopup(); };
+        // Deactivated never comes if Windows didn't really give us the foreground (or took it back quietly):
+        // then a click on the desktop or the Start menu left the popup open until it was clicked again.
+        // So also close on any click outside and on any other app taking the foreground.
+        _outside = new OutsideClickWatcher(Dispatcher);
+        _outside.OutsideClick += () => { if (!KeepOpen) HidePopup(); };
+        _foregroundProc = (_, _, hwnd, _, _, _, _) => { if (!KeepOpen && hwnd != IntPtr.Zero) HidePopup(); };
         SourceInitialized += (_, _) => SetupNativeWindow();
         List.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(OnListScroll));
     }
@@ -102,6 +111,7 @@ public partial class MainWindow : Window
         Activate();
         Keyboard.Focus(Search);
         UpdateDust();
+        if (IsVisible) WatchOutside(true); // not if focus was already lost while showing
 
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
         Body.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(90)));
@@ -119,10 +129,28 @@ public partial class MainWindow : Window
     public void HidePopup()
     {
         if (!IsVisible) return;
+        WatchOutside(false);
         Hide();
         // drop the items (and their thumbnails) while hidden; the next open reloads anyway
         _items.Clear();
         UpdateDust();
+    }
+
+    private void WatchOutside(bool on)
+    {
+        if (on)
+        {
+            _outside.Start();
+            if (_foregroundHook == IntPtr.Zero)
+                _foregroundHook = Native.SetWinEventHook(Native.EVENT_SYSTEM_FOREGROUND, Native.EVENT_SYSTEM_FOREGROUND, IntPtr.Zero,
+                    _foregroundProc, 0, 0, Native.WINEVENT_OUTOFCONTEXT | Native.WINEVENT_SKIPOWNPROCESS);
+        }
+        else
+        {
+            _outside.Stop();
+            if (_foregroundHook != IntPtr.Zero) Native.UnhookWinEvent(_foregroundHook);
+            _foregroundHook = IntPtr.Zero;
+        }
     }
 
     private bool _dustRunning;
@@ -169,6 +197,9 @@ public partial class MainWindow : Window
     private void ForceForeground()
     {
         var hwnd = new WindowInteropHelper(this).Handle;
+        // usually allowed outright: the Win+V hook has just injected a key from this process.
+        // AttachThreadInput is only the fallback, as it can leave the activation state of both threads confused.
+        if (Native.SetForegroundWindow(hwnd) && Native.GetForegroundWindow() == hwnd) return;
         var fg = Native.GetForegroundWindow();
         uint fgThread = Native.GetWindowThreadProcessId(fg, out _);
         uint me = Native.GetCurrentThreadId();
@@ -613,6 +644,31 @@ public partial class MainWindow : Window
     {
         if ((sender as FrameworkElement)?.DataContext is ClipItem item) DeleteItem(item);
         Keyboard.Focus(Search);
+    }
+
+    /// <summary>The window is dragged by the grab strip or any empty spot; buttons, chips, the search field
+    /// and the list keep their own clicks.</summary>
+    private void Shell_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var src = e.OriginalSource as DependencyObject;
+        if (e.Handled || FindAncestor<ListBox>(src) is not null || FindAncestor<ButtonBase>(src) is not null) return;
+        if (IsInside(src, SearchBox))
+        {
+            Keyboard.Focus(Search);
+            return;
+        }
+        try { DragMove(); } catch (InvalidOperationException) { }
+        Keyboard.Focus(Search);
+    }
+
+    private static bool IsInside(DependencyObject? d, DependencyObject ancestor)
+    {
+        while (d is not null)
+        {
+            if (d == ancestor) return true;
+            d = d is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
+        }
+        return false;
     }
 
     private void Settings_Click(object sender, RoutedEventArgs e)

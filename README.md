@@ -65,7 +65,10 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 
 ## Данные
 
-Данные лежат в `%LOCALAPPDATA%\ClipNest`: `history.db`, папка `images\`, `settings.json`, `clipnest.log`.
+Данные лежат в `Документы\ClipNest`: `history.db`, папка `images\`, `settings.json`, `secret.key`, `clipnest.log`.
+Папку можно сменить в настройках («Данные → Папка с данными»): история переносится туда, ClipNest перезапускается.
+Если выбрать непустую папку, данные лягут в подпапку `ClipNest`. Выбранный путь хранится в реестре (`HKCU\Software\ClipNest`, `DataDir`).
+Данные из старого места (`%LOCALAPPDATA%\ClipNest`) переносятся автоматически при первом запуске.
 Если рядом с exe положить файл `portable.txt`, данные будут храниться в папке `data\` рядом с программой.
 
 Параметры запуска: `--tray` (запуск без показа окна), `--exit` (закрыть запущенную копию).

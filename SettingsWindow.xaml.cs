@@ -32,6 +32,12 @@ public partial class SettingsWindow : Window
         Excluded.Text = string.Join(Environment.NewLine, s.ExcludedApps);
         DataPath.Text = App.Storage.DataDir;
         DataPath.ToolTip = App.Storage.DataDir;
+        ResetFolder.Visibility = DataLocation.SamePath(App.Storage.DataDir, DataLocation.DefaultDir) ? Visibility.Collapsed : Visibility.Visible;
+        if (DataLocation.IsPortable)
+        {
+            ChangeFolder.IsEnabled = ResetFolder.IsEnabled = false;
+            DataHint.Text = "Портативный режим (portable.txt): данные хранятся рядом с программой.";
+        }
         if (!App.Hook.IsInstalled) ReplaceWinV.IsEnabled = false;
         UpdateStats();
     }
@@ -42,6 +48,12 @@ public partial class SettingsWindow : Window
     private static int ParseInt(string s) => int.TryParse(s.Trim(), out var v) && v > 0 ? v : 0;
 
     private void Save_Click(object sender, RoutedEventArgs e)
+    {
+        ApplyForm();
+        Close();
+    }
+
+    private void ApplyForm()
     {
         var s = App.Settings;
         s.ReplaceWinV = ReplaceWinV.IsChecked == true;
@@ -60,7 +72,6 @@ public partial class SettingsWindow : Window
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         App.Current.ApplySettings();
-        Close();
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => Close();
@@ -71,6 +82,31 @@ public partial class SettingsWindow : Window
     private void OpenFolder_Click(object sender, RoutedEventArgs e)
     {
         try { Process.Start("explorer.exe", $"\"{App.Storage.DataDir}\""); } catch { }
+    }
+
+    private void ChangeFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "Где хранить историю ClipNest",
+            InitialDirectory = App.Storage.DataDir,
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        MoveTo(DataLocation.TargetFor(dlg.FolderName));
+    }
+
+    private void ResetFolder_Click(object sender, RoutedEventArgs e) => MoveTo(DataLocation.DefaultDir);
+
+    private void MoveTo(string dir)
+    {
+        if (DataLocation.SamePath(dir, App.Storage.DataDir)) return;
+        var text = DataLocation.HasHistory(dir)
+            ? $"В папке «{dir}» уже есть история ClipNest. Переключиться на неё?\n\nТекущая история останется в «{App.Storage.DataDir}»."
+            : $"Перенести историю, картинки и настройки в «{dir}»?\n\nClipNest перезапустится.";
+        if (MessageBox.Show(this, text, "ClipNest", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.OK)
+            != MessageBoxResult.OK) return;
+        ApplyForm(); // keep what was changed in this window: settings.json moves along
+        App.Current.RelocateData(dir);
     }
 
     private void Clear_Click(object sender, RoutedEventArgs e)

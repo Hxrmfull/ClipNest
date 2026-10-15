@@ -225,9 +225,31 @@ public sealed partial class ClipItem : INotifyPropertyChanged
 
     // ---------- images ----------
 
+    private BitmapSource? _thumb;
+    private bool _thumbLoading;
+
     /// <summary>Card preview, decoded to fit 760×300 px (the card at up to 200% scale).
-    /// Bound with IsAsync, so this runs off the UI thread.</summary>
-    public BitmapSource? Thumbnail => ImagePath is null ? null : ThumbCache.Get(ImagePath, () => LoadImage(760, 300));
+    /// An already decoded one is returned at once, so switching filters or reopening the popup shows it
+    /// in the very first frame (an IsAsync binding always started empty and flickered).
+    /// Otherwise it is decoded off the UI thread and the binding is notified when ready.</summary>
+    public BitmapSource? Thumbnail
+    {
+        get
+        {
+            if (_thumb is not null || ImagePath is not { } path) return _thumb;
+            if (ThumbCache.TryPeek(path, out var cached)) return _thumb = cached;
+            if (!_thumbLoading)
+            {
+                _thumbLoading = true;
+                System.Threading.Tasks.Task.Run(() =>
+                {
+                    _thumb = ThumbCache.Get(path, () => LoadImage(760, 300));
+                    if (_thumb is not null) OnChanged(nameof(Thumbnail));
+                });
+            }
+            return null;
+        }
+    }
 
     /// <summary>Hover preview, decoded to fit 1440×1040 px.</summary>
     public BitmapSource? LargePreview => LoadImage(1440, 1040);
@@ -294,6 +316,23 @@ internal static class ThumbCache
             }
         }
         return entry.Value;
+    }
+
+    /// <summary>A thumbnail that is already decoded, without waiting for one in progress.</summary>
+    public static bool TryPeek(string key, out BitmapSource? img)
+    {
+        lock (Gate)
+        {
+            if (Map.TryGetValue(key, out var node) && node.Value.img.IsValueCreated)
+            {
+                Order.Remove(node);
+                Order.AddFirst(node);
+                img = node.Value.img.Value;
+                return img is not null;
+            }
+        }
+        img = null;
+        return false;
     }
 
     public static void Forget(string? key)
