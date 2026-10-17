@@ -77,6 +77,13 @@ public partial class App : Application
         CreateTray();
         ListenForSecondInstance();
 
+        // locking the PC (Win+L) closes the popup: it must not keep taking keys after unlocking
+        Microsoft.Win32.SystemEvents.SessionSwitch += (_, ev) =>
+        {
+            if (ev.Reason is Microsoft.Win32.SessionSwitchReason.SessionLock or Microsoft.Win32.SessionSwitchReason.ConsoleDisconnect
+                or Microsoft.Win32.SessionSwitchReason.RemoteDisconnect)
+                Dispatcher.BeginInvoke(_popup.HidePopup);
+        };
         Microsoft.Win32.SystemEvents.UserPreferenceChanged += (_, _) =>
         {
             if (Settings.Theme == ThemeMode.System) Dispatcher.BeginInvoke(() => Theme.Apply(ThemeMode.System));

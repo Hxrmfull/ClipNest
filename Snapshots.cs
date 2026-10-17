@@ -126,8 +126,10 @@ internal static class Snapshots
 
         popup.HidePopup();
         await Task.Delay(3000);
-        var (cpuHidden, fpsHidden) = await Cpu(5000);
-        sb.AppendLine($"hidden idle: cpu={cpuHidden:0.00}%");
+        var (cpuHidden, _) = await Cpu(5000);
+        var (cpuHidden2, _) = await Cpu(5000);
+        // the first window can still include .NET recompiling hot methods (tiered JIT) after the searches above
+        sb.AppendLine($"hidden idle: cpu={cpuHidden:0.00}% then {cpuHidden2:0.00}%");
 
         GC.Collect();
         GC.WaitForPendingFinalizers();

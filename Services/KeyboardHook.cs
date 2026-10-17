@@ -29,6 +29,10 @@ public sealed class KeyboardHook : IDisposable
     private bool _swallowing;
     private volatile bool _enabled = true;
     private volatile bool _capture;
+    private long _posted;      // hook thread: keys handed to the UI
+    private long _acked;       // UI thread (Interlocked): keys the UI has taken
+    private long _queueSince;  // hook thread: when the oldest key not yet taken was handed over
+    private const int StuckMs = 1500;
 
     public event Action? WinVPressed;
     public event Action<PopupKey>? PopupKeyPressed;
@@ -107,10 +111,26 @@ public sealed class KeyboardHook : IDisposable
                     }
                 }
 
+                if (down && _capture)
+                {
+                    // safety: if the UI thread stops taking keys, the popup would swallow typing system-wide
+                    long now = Environment.TickCount64;
+                    if (Interlocked.Read(ref _acked) == _posted) _queueSince = now;
+                    else if (now - _queueSince > StuckMs)
+                    {
+                        _capture = false;
+                        _dispatcher.BeginInvoke(() => Log.Write("popup didn't take keys for 1.5 s; keyboard capture released"));
+                    }
+                }
                 if (down && _capture && TryCapture(k, out var key))
                 {
                     _swallowedDown.Add(k.vkCode);
-                    _dispatcher.BeginInvoke(DispatcherPriority.Send, () => PopupKeyPressed?.Invoke(key));
+                    _posted++;
+                    _dispatcher.BeginInvoke(DispatcherPriority.Send, () =>
+                    {
+                        Interlocked.Increment(ref _acked);
+                        PopupKeyPressed?.Invoke(key);
+                    });
                     return new IntPtr(1);
                 }
                 // the app never saw the key-down, so it must not get a lone key-up either (even after the popup closed)

@@ -25,7 +25,8 @@ public partial class MainWindow : Window
     private const int DWMWA_TRANSITIONS_FORCEDISABLED = 3;
     private const int DWMWCP_ROUND = 2;
 
-    private readonly ObservableCollection<ClipItem> _items = new();
+    private readonly ClipList _items = new();
+    private ClipItem? _pressedItem;
     private readonly DispatcherTimer _searchTimer;
     private ClipFilter _filter = ClipFilter.All;
     private bool _hasMore;
@@ -354,8 +355,7 @@ public partial class MainWindow : Window
     private void Reload(long? selectId = null)
     {
         var page = App.Storage.Query(Search.Text, _filter, 0, PageSize);
-        _items.Clear();
-        foreach (var i in page) _items.Add(i);
+        _items.ReplaceAll(page);
         _hasMore = page.Count == PageSize;
         Renumber();
 
@@ -462,10 +462,14 @@ public partial class MainWindow : Window
         return !ShellClasses.Contains(sb.ToString());
     }
 
-    private bool PutOnClipboard(ClipItem item, bool plain, string? overrideText = null)
+    private async Task<bool> PutOnClipboard(ClipItem item, bool plain, string? overrideText = null)
     {
         App.Storage.LoadFull(item);
-        if (!ClipboardWriter.Set(item, plain, overrideText)) return false;
+        if (!await ClipboardWriter.SetAsync(item, plain, overrideText))
+        {
+            Log.Write("paste: the clipboard stayed locked by another program");
+            return false;
+        }
         App.Monitor.IgnoreOwnChange();
         if (App.Settings.MoveUsedToTop) App.Storage.Touch(item.Id);
         return true;
@@ -473,10 +477,10 @@ public partial class MainWindow : Window
 
     private async void Paste(ClipItem item, bool plain, string? overrideText = null)
     {
-        if (!PutOnClipboard(item, plain, overrideText)) return;
-
         var target = _prevForeground;
+        // close at once: for a big image the clipboard data is still being prepared in the background
         HidePopup();
+        if (!await PutOnClipboard(item, plain, overrideText)) return;
         if (!CanPasteInto(target)) return; // it's on the clipboard; nothing to paste into
 
         // shown without focus, the app still has it, caret and all: paste right away, like the built-in panel.
@@ -492,9 +496,10 @@ public partial class MainWindow : Window
         InputSender.SendPaste();
     }
 
-    private void CopyOnly(ClipItem item)
+    private async void CopyOnly(ClipItem item)
     {
-        if (PutOnClipboard(item, false)) HidePopup();
+        HidePopup();
+        await PutOnClipboard(item, false);
     }
 
     private void PasteTransformed(ClipItem item, Func<string, string> transform)
@@ -765,16 +770,26 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private void List_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    private ClipItem? CardUnder(MouseButtonEventArgs e)
     {
         var src = e.OriginalSource as DependencyObject;
-        if (FindAncestor<ButtonBase>(src) is not null) return;
-        if (FindAncestor<ScrollBar>(src) is not null) return;
-        if (FindAncestor<ListBoxItem>(src)?.DataContext is ClipItem item)
-        {
-            e.Handled = true;
-            Paste(item, Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
-        }
+        if (FindAncestor<ButtonBase>(src) is not null || FindAncestor<ScrollBar>(src) is not null) return null;
+        return FindAncestor<ListBoxItem>(src)?.DataContext as ClipItem;
+    }
+
+    private void List_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => _pressedItem = CardUnder(e);
+
+    private void List_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        var item = CardUnder(e);
+        var pressed = _pressedItem;
+        _pressedItem = null;
+        // a click is press and release on the same card (not a press on one and a release on another)
+        if (item is null || !ReferenceEquals(item, pressed)) return;
+        e.Handled = true;
+        // shown without focus, WPF doesn't see modifier keys: ask the keyboard itself
+        bool shift = (Native.GetAsyncKeyState(Native.VK_SHIFT) & 0x8000) != 0;
+        Paste(item, shift);
     }
 
     private void Reveal_Click(object sender, RoutedEventArgs e)
