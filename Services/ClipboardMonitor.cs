@@ -122,7 +122,7 @@ public sealed class ClipboardMonitor : IDisposable
                 }
             }
 
-            var item = ReadFiles(data) ?? ReadText(data, flagged) ?? (_settings.SaveImages ? await ReadImageAsync(data) : null);
+            var item = ReadFiles(data) ?? ReadText(data, flagged) ?? (_settings.SaveImages ? await ReadImageAsync(data, flagged) : null);
             if (item is null) return;
             item.Source = source;
 
@@ -223,7 +223,7 @@ public sealed class ClipboardMonitor : IDisposable
         };
     }
 
-    private async Task<ClipItem?> ReadImageAsync(IDataObject data)
+    private async Task<ClipItem?> ReadImageAsync(IDataObject data, bool flagged)
     {
         byte[]? png = null;
         int w = 0, h = 0;
@@ -280,20 +280,53 @@ public sealed class ClipboardMonitor : IDisposable
 
         if (_settings.MaxImageMb > 0 && bytes.Length > _settings.MaxImageMb * 1024L * 1024) return null;
 
-        // a known image keeps its file as is (it may be stored encrypted under another extension)
-        var path = Path.Combine(_storage.ImagesDir, hash[2..] + ".png");
-        if (!_storage.HashExists(hash))
-            await File.WriteAllBytesAsync(path, bytes);
-
-        return new ClipItem
+        var item = new ClipItem { Kind = ClipKind.Image, Width = w, Height = h, Hash = hash, Size = bytes.Length };
+        if (_storage.HashExists(hash))
         {
-            Kind = ClipKind.Image,
-            ImagePath = path,
-            Width = w,
-            Height = h,
-            Hash = hash,
-            Size = bytes.Length,
-        };
+            // a known image: the stored row keeps its file, secrecy and regions; Add only moves it to the top
+            item.ImagePath = Path.Combine(_storage.ImagesDir, hash[2..] + Secrets.EncryptedImageExt);
+            return item;
+        }
+
+        // a new image is checked for secrets before anything reaches the disk
+        if (flagged)
+        {
+            item.Secret = true; // from a password manager, kept because privacy flags are off: hide it whole
+        }
+        else if (_settings.ScanImages && ImageScanner.Available)
+        {
+            var scan = await Task.Run(async () =>
+                await ImageScanner.ScanAsync(dpx ?? DecodeBgra(bytes), ww, hh));
+            if (scan is not null)
+            {
+                if (scan.Milliseconds > 1000) Log.Write($"OCR took {scan.Milliseconds:0} ms for {ww}x{hh}");
+                if (scan.Secrets.Count > 0 || scan.WholeImage)
+                {
+                    item.Secret = true;
+                    item.Regions = scan.WholeImage ? null : ImageScanner.Serialize(scan.Secrets);
+                }
+                else
+                {
+                    item.OcrText = scan.Text; // searchable by the text on it
+                }
+            }
+        }
+
+        // every image is stored encrypted (DPAPI, this Windows account), secret or not
+        var file = Path.Combine(_storage.ImagesDir, hash[2..] + Secrets.EncryptedImageExt);
+        await File.WriteAllBytesAsync(file, Secrets.Protect(bytes));
+        item.ImagePath = file;
+        return item;
+    }
+
+    /// <summary>Bgra32 pixels of a PNG, for OCR. Worker thread.</summary>
+    internal static byte[] DecodeBgra(byte[] png)
+    {
+        var frame = BitmapDecoder.Create(new MemoryStream(png), BitmapCreateOptions.IgnoreColorProfile, BitmapCacheOption.OnLoad).Frames[0];
+        BitmapSource src = frame.Format == PixelFormats.Bgra32 ? frame : new FormatConvertedBitmap(frame, PixelFormats.Bgra32, null, 0);
+        var px = new byte[src.PixelWidth * 4 * src.PixelHeight];
+        src.CopyPixels(px, src.PixelWidth * 4, 0);
+        return px;
     }
 
     public void Dispose()

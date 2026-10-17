@@ -29,6 +29,17 @@ public partial class SettingsWindow : Window
         MaxImageMb.Text = s.MaxImageMb.ToString();
         RespectPrivacy.IsChecked = s.RespectPrivacyFlags;
         HideSecrets.IsChecked = s.HideSecrets;
+        ScanImages.IsChecked = s.ScanImages;
+        ClearSecrets.IsChecked = s.ClearSecretSeconds > 0;
+        if (!ImageScanner.Available)
+        {
+            ScanImages.IsEnabled = false;
+#if OCR
+            ScanImagesHint.Text = "В Windows не установлен ни один язык распознавания текста (Параметры → Время и язык → Язык).";
+#else
+            ScanImagesHint.Text = "Эта версия ClipNest без распознавания текста. Оно есть в версии с OCR.";
+#endif
+        }
         Excluded.Text = string.Join(Environment.NewLine, s.ExcludedApps);
         DataPath.Text = App.Storage.DataDir;
         DataPath.ToolTip = App.Storage.DataDir;
@@ -66,6 +77,8 @@ public partial class SettingsWindow : Window
         s.MaxImageMb = ParseInt(MaxImageMb.Text);
         s.RespectPrivacyFlags = RespectPrivacy.IsChecked == true;
         s.HideSecrets = HideSecrets.IsChecked == true;
+        if (ScanImages.IsEnabled) s.ScanImages = ScanImages.IsChecked == true;
+        s.ClearSecretSeconds = ClearSecrets.IsChecked == true ? (s.ClearSecretSeconds > 0 ? s.ClearSecretSeconds : 60) : 0;
         s.ExcludedApps = Excluded.Text
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(x => x.Length > 0)

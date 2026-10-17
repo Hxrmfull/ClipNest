@@ -11,9 +11,15 @@ namespace ClipNest;
 
 public partial class App : Application
 {
-    private const string MutexName = "ClipNest.SingleInstance.v1";
-    private const string ShowEventName = "ClipNest.ShowPopup.v1";
-    private const string ExitEventName = "ClipNest.Exit.v1";
+    // One running copy per data folder: the names carry a hash of the folder, so a second copy with its own data
+    // (a portable or test copy) neither blocks nor commands the main one. Versions up to 1.x used the bare names.
+    private const string LegacyMutexName = "ClipNest.SingleInstance.v1";
+    private const string LegacyShowEventName = "ClipNest.ShowPopup.v1";
+    private const string LegacyExitEventName = "ClipNest.Exit.v1";
+    private static string _scope = "";
+    private static string MutexName => "ClipNest.SingleInstance.v2." + _scope;
+    private static string ShowEventName => "ClipNest.ShowPopup.v2." + _scope;
+    private static string ExitEventName => "ClipNest.Exit.v2." + _scope;
 
     private Mutex? _mutex;
     private EventWaitHandle? _showEvent;
@@ -33,9 +39,13 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        _scope = DataLocation.InstanceScope();
+        bool portable = DataLocation.IsPortable;
+
         if (e.Args.Contains("--exit"))
         {
             try { EventWaitHandle.OpenExisting(ExitEventName).Set(); } catch { }
+            if (!portable) { try { EventWaitHandle.OpenExisting(LegacyExitEventName).Set(); } catch { } }
             Shutdown();
             return;
         }
@@ -43,8 +53,17 @@ public partial class App : Application
         _mutex = new Mutex(true, MutexName, out bool first);
         if (!first)
         {
-            // another copy is running: ask it to show the history and quit
+            // another copy is running on this data: ask it to show the history and quit
             try { EventWaitHandle.OpenExisting(ShowEventName).Set(); } catch { }
+            Shutdown();
+            return;
+        }
+        // an older version (bare names) on the same default data: don't run a second copy next to it
+        if (!portable && Mutex.TryOpenExisting(LegacyMutexName, out var legacy))
+        {
+            legacy.Dispose();
+            try { EventWaitHandle.OpenExisting(LegacyShowEventName).Set(); } catch { }
+            _mutex.ReleaseMutex();
             Shutdown();
             return;
         }
@@ -52,6 +71,7 @@ public partial class App : Application
         var dataDir = DataLocation.Resolve();
         Directory.CreateDirectory(dataDir);
         Log.FilePath = Path.Combine(dataDir, "clipnest.log");
+        DataLocation.RestrictToCurrentUser(dataDir);
         DispatcherUnhandledException += (_, ex) =>
         {
             Log.Write("unhandled: " + ex.Exception);
@@ -264,6 +284,7 @@ public partial class App : Application
 
     public void Quit()
     {
+        ClipNest.MainWindow.CleanViewCopies();
         if (_tray is not null) { _tray.Visible = false; _tray.Dispose(); }
         Hook?.Dispose();
         Monitor?.Dispose();

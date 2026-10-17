@@ -28,6 +28,11 @@ public sealed class AppSettings
     public bool RespectPrivacyFlags { get; set; } = true;
     /// <summary>Auto-detect passwords, tokens, keys and card numbers; they are blurred and encrypted.</summary>
     public bool HideSecrets { get; set; } = true;
+    /// <summary>Read new images with the Windows OCR (OCR edition) and blur the secrets found on them.</summary>
+    public bool ScanImages { get; set; } = true;
+    /// <summary>A pasted secret is taken off the system clipboard after this many seconds (if nothing else was copied
+    /// since), like password managers do. 0 = leave it.</summary>
+    public int ClearSecretSeconds { get; set; } = 60;
     public List<string> ExcludedApps { get; set; } = new()
     {
         "KeePass.exe", "KeePassXC.exe", "1Password.exe", "Bitwarden.exe", "LastPass.exe", "Enpass.exe",

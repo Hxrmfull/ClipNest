@@ -67,6 +67,47 @@ public static class DataLocation
         return dir;
     }
 
+    /// <summary>A short id of the data folder this copy will use, without moving anything (unlike <see cref="Resolve"/>):
+    /// scopes the single-instance mutex and the show/exit events.</summary>
+    public static string InstanceScope()
+    {
+        var dir = IsPortable ? Path.Combine(AppContext.BaseDirectory, "data") : (CustomDir ?? DefaultDir);
+        var key = Path.GetFullPath(dir).TrimEnd('\\', '/').ToLowerInvariant();
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)))[..12];
+    }
+
+    /// <summary>Leaves the data folder to this Windows account and SYSTEM only. A folder under D:\ (or any non-system
+    /// drive) otherwise inherits "Authenticated Users: modify", letting every account on the PC read the history.</summary>
+    public static void RestrictToCurrentUser(string dir)
+    {
+        try
+        {
+            var me = System.Security.Principal.WindowsIdentity.GetCurrent().User;
+            if (me is null) return;
+            var system = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null);
+            var info = new DirectoryInfo(dir);
+            var current = info.GetAccessControl();
+            var rules = current.GetAccessRules(true, true, typeof(System.Security.Principal.SecurityIdentifier))
+                .Cast<System.Security.AccessControl.FileSystemAccessRule>().ToList();
+            if (current.AreAccessRulesProtected && rules.All(r => r.IdentityReference.Equals(me) || r.IdentityReference.Equals(system)))
+                return; // already done
+
+            var inherit = System.Security.AccessControl.InheritanceFlags.ContainerInherit | System.Security.AccessControl.InheritanceFlags.ObjectInherit;
+            var sec = new System.Security.AccessControl.DirectorySecurity();
+            sec.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            foreach (var who in new[] { (System.Security.Principal.IdentityReference)me, system })
+                sec.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(who,
+                    System.Security.AccessControl.FileSystemRights.FullControl, inherit,
+                    System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
+            info.SetAccessControl(sec); // files inside inherit the new rules
+            Log.Write("data folder restricted to the current account");
+        }
+        catch (Exception ex)
+        {
+            Log.Write("restricting the data folder failed: " + ex.Message);
+        }
+    }
+
     public static bool HasHistory(string dir) => File.Exists(Path.Combine(dir, "history.db"));
 
     public static bool SamePath(string a, string b) =>

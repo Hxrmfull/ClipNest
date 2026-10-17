@@ -88,7 +88,7 @@
                             Background="{DynamicResource Checker}" Visibility="Collapsed" Padding="0"
                             local:RoundedClip.Radius="8">
                         <Grid>
-                            <Image x:Name="img" Source="{Binding Thumbnail}" MaxHeight="150" Stretch="Uniform"
+                            <Image x:Name="img" Source="{Binding DisplayThumbnail}" MaxHeight="150" Stretch="Uniform"
                                    StretchDirection="DownOnly" RenderOptions.BitmapScalingMode="HighQuality"
                                    ToolTipService.InitialShowDelay="500">
                                 <Image.ToolTip>
@@ -145,8 +145,16 @@
                 <DataTrigger Binding="{Binding Secret}" Value="True">
                     <Setter TargetName="text" Property="Opacity" Value="0"/>
                     <Setter TargetName="spoiler" Property="Visibility" Value="Visible"/>
-                    <Setter TargetName="imgDust" Property="Visibility" Value="Visible"/>
                     <Setter TargetName="eyeBtn" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <!-- a whole secret image: blurred with dust over it. With found regions (OCR) the picture comes
+                     pre-masked from DisplayThumbnail instead, the rest of it stays readable -->
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding Secret}" Value="True"/>
+                        <Condition Binding="{Binding HasRegions}" Value="False"/>
+                    </MultiDataTrigger.Conditions>
+                    <Setter TargetName="imgDust" Property="Visibility" Value="Visible"/>
                     <Setter TargetName="img" Property="Effect">
                         <Setter.Value>
                             <BlurEffect Radius="28"/>
@@ -157,7 +165,7 @@
                             <BitmapCache/>
                         </Setter.Value>
                     </Setter>
-                </DataTrigger>
+                </MultiDataTrigger>
                 <DataTrigger Binding="{Binding IsHidden}" Value="True">
                     <Setter TargetName="img" Property="ToolTipService.IsEnabled" Value="False"/>
                 </DataTrigger>
@@ -175,8 +183,6 @@
                                 <DoubleAnimation Storyboard.TargetName="text" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.35"/>
                                 <DoubleAnimation Storyboard.TargetName="spoiler" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.3"/>
                                 <DoubleAnimation Storyboard.TargetName="imgDust" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.3"/>
-                                <DoubleAnimation Storyboard.TargetName="img" Storyboard.TargetProperty="(UIElement.Effect).(BlurEffect.Radius)"
-                                                 To="0" Duration="0:0:0.4"/>
                             </Storyboard>
                         </BeginStoryboard>
                     </DataTrigger.EnterActions>
@@ -186,12 +192,33 @@
                                 <DoubleAnimation Storyboard.TargetName="text" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15"/>
                                 <DoubleAnimation Storyboard.TargetName="spoiler" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.25"/>
                                 <DoubleAnimation Storyboard.TargetName="imgDust" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.25"/>
-                                <DoubleAnimation Storyboard.TargetName="img" Storyboard.TargetProperty="(UIElement.Effect).(BlurEffect.Radius)"
-                                                 To="28" Duration="0:0:0.25"/>
                             </Storyboard>
                         </BeginStoryboard>
                     </DataTrigger.ExitActions>
                 </DataTrigger>
+                <!-- the blur animation only where there is a blur effect to animate -->
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding Revealed}" Value="True"/>
+                        <Condition Binding="{Binding HasRegions}" Value="False"/>
+                    </MultiDataTrigger.Conditions>
+                    <MultiDataTrigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="img" Storyboard.TargetProperty="(UIElement.Effect).(BlurEffect.Radius)"
+                                                 To="0" Duration="0:0:0.4"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </MultiDataTrigger.EnterActions>
+                    <MultiDataTrigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="img" Storyboard.TargetProperty="(UIElement.Effect).(BlurEffect.Radius)"
+                                                 To="28" Duration="0:0:0.25"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </MultiDataTrigger.ExitActions>
+                </MultiDataTrigger>
                 <DataTrigger Binding="{Binding HasSwatch}" Value="True">
                     <Setter TargetName="swatch" Property="Visibility" Value="Visible"/>
                 </DataTrigger>

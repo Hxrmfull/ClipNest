@@ -128,8 +128,10 @@ internal static class Snapshots
         await Task.Delay(3000);
         var (cpuHidden, _) = await Cpu(5000);
         var (cpuHidden2, _) = await Cpu(5000);
+        await Task.Delay(10000);
+        var (cpuHidden3, _) = await Cpu(10000);
         // the first window can still include .NET recompiling hot methods (tiered JIT) after the searches above
-        sb.AppendLine($"hidden idle: cpu={cpuHidden:0.00}% then {cpuHidden2:0.00}%");
+        sb.AppendLine($"hidden idle: cpu={cpuHidden:0.00}% then {cpuHidden2:0.00}%, after 20 s {cpuHidden3:0.00}%");
 
         GC.Collect();
         GC.WaitForPendingFinalizers();

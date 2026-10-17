@@ -20,7 +20,19 @@ public static class ClipboardWriter
     public static async Task<bool> SetAsync(ClipItem item, bool plain, string? overrideText = null)
     {
         var d = await BuildAsync(item, plain, overrideText);
-        return d is not null && Put(d);
+        if (d is null) return false;
+        if (item.Secret) MarkPrivate(d);
+        return Put(d);
+    }
+
+    /// <summary>The formats password managers set: Windows clipboard history (Win+V), its cloud sync across devices
+    /// and other clipboard managers then don't keep a copy of the pasted secret.</summary>
+    private static void MarkPrivate(DataObject d)
+    {
+        var no = BitConverter.GetBytes(0);
+        d.SetData("ExcludeClipboardContentFromMonitorProcessing", new MemoryStream(no), false);
+        d.SetData("CanIncludeInClipboardHistory", new MemoryStream(no), false);
+        d.SetData("CanUploadToCloudClipboard", new MemoryStream(no), false);
     }
 
     public static Task<DataObject?> BuildAsync(ClipItem item, bool plain, string? overrideText) =>

@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ClipNest.Services;
@@ -42,6 +43,15 @@ public sealed partial class ClipItem : INotifyPropertyChanged
     public long Size { get; set; }
     /// <summary>Password, token, key… Shown as a spoiler and stored encrypted.</summary>
     public bool Secret { get; set; }
+    /// <summary>Secret image: where on it the secrets are ("x,y,w,h;…", image pixels). Only those parts are blurred;
+    /// null means the whole picture.</summary>
+    public string? Regions { get; set; }
+    /// <summary>Text OCR read off a new image; goes into the search key only, never stored on its own.</summary>
+    public string? OcrText { get; set; }
+
+    private Int32Rect[]? _regionRects;
+    public Int32Rect[] RegionRects => _regionRects ??= ImageScanner.Parse(Regions);
+    public bool HasRegions => Kind == ClipKind.Image && RegionRects.Length > 0;
 
     private bool _revealed;
     /// <summary>Spoiler opened by the user; lasts until the list is reloaded.
@@ -58,6 +68,7 @@ public sealed partial class ClipItem : INotifyPropertyChanged
             OnChanged(nameof(IsHidden));
             OnChanged(nameof(Preview));
             OnChanged(nameof(ToolTipText));
+            if (HasRegions) OnChanged(nameof(DisplayThumbnail));
         }
     }
 
@@ -225,8 +236,12 @@ public sealed partial class ClipItem : INotifyPropertyChanged
 
     // ---------- images ----------
 
-    private BitmapSource? _thumb;
-    private bool _thumbLoading;
+    private BitmapSource? _thumb, _masked;
+    private bool _thumbLoading, _maskLoading;
+
+    /// <summary>What the card shows: the picture, or for a secret one with found regions, the picture with just
+    /// those parts blurred (until revealed). A whole-picture secret is blurred by the template instead.</summary>
+    public BitmapSource? DisplayThumbnail => HasRegions && !_revealed ? Masked : Thumbnail;
 
     /// <summary>Card preview, decoded to fit 760×300 px (the card at up to 200% scale).
     /// An already decoded one is returned at once, so switching filters or reopening the popup shows it
@@ -244,11 +259,88 @@ public sealed partial class ClipItem : INotifyPropertyChanged
                 System.Threading.Tasks.Task.Run(() =>
                 {
                     _thumb = ThumbCache.Get(path, () => LoadImage(760, 300));
-                    if (_thumb is not null) OnChanged(nameof(Thumbnail));
+                    if (_thumb is null) return;
+                    OnChanged(nameof(Thumbnail));
+                    OnChanged(nameof(DisplayThumbnail));
                 });
             }
             return null;
         }
+    }
+
+    private BitmapSource? Masked
+    {
+        get
+        {
+            if (_masked is not null || ImagePath is not { } path) return _masked;
+            var key = path + "#" + Regions;
+            if (ThumbCache.TryPeek(key, out var cached)) return _masked = cached;
+            if (!_maskLoading)
+            {
+                _maskLoading = true;
+                var rects = RegionRects;
+                System.Threading.Tasks.Task.Run(() =>
+                {
+                    _masked = ThumbCache.Get(key, () => ThumbCache.Get(path, () => LoadImage(760, 300)) is { } t ? Mask(t, rects) : null);
+                    if (_masked is not null) OnChanged(nameof(DisplayThumbnail));
+                });
+            }
+            return null;
+        }
+    }
+
+    /// <summary>The thumbnail with each region pixelated beyond reading and sprinkled with dots, like the text spoiler.
+    /// Done once on a worker thread, so the card itself stays a plain image (no effects to render).</summary>
+    private BitmapSource Mask(BitmapSource thumb, Int32Rect[] regions)
+    {
+        var src = thumb.Format == PixelFormats.Bgra32 ? thumb : new FormatConvertedBitmap(thumb, PixelFormats.Bgra32, null, 0);
+        int w = src.PixelWidth, h = src.PixelHeight, stride = w * 4;
+        var px = new byte[stride * h];
+        src.CopyPixels(px, stride, 0);
+        double k = (double)w / Math.Max(1, Width);
+        var rnd = new Random((int)(Id * 31 % int.MaxValue));
+
+        foreach (var r in regions)
+        {
+            int x0 = Math.Clamp((int)(r.X * k) - 1, 0, w - 1), y0 = Math.Clamp((int)(r.Y * k) - 1, 0, h - 1);
+            int x1 = Math.Clamp((int)Math.Ceiling((r.X + r.Width) * k) + 1, x0 + 1, w);
+            int y1 = Math.Clamp((int)Math.Ceiling((r.Y + r.Height) * k) + 1, y0 + 1, h);
+            // blocks as tall as the text line: nothing of the glyphs survives
+            int block = Math.Max(3, (y1 - y0 + 1) / 2);
+            for (int by = y0; by < y1; by += block)
+            for (int bx = x0; bx < x1; bx += block)
+            {
+                int ex = Math.Min(bx + block, x1), ey = Math.Min(by + block, y1);
+                long b = 0, g = 0, rr = 0, n = 0;
+                for (int y = by; y < ey; y++)
+                for (int x = bx; x < ex; x++)
+                {
+                    int o = y * stride + x * 4;
+                    b += px[o]; g += px[o + 1]; rr += px[o + 2]; n++;
+                }
+                if (n == 0) continue;
+                byte mb = (byte)(b / n), mg = (byte)(g / n), mr = (byte)(rr / n);
+                for (int y = by; y < ey; y++)
+                for (int x = bx; x < ex; x++)
+                {
+                    int o = y * stride + x * 4;
+                    px[o] = mb; px[o + 1] = mg; px[o + 2] = mr; px[o + 3] = 255;
+                }
+            }
+            // spoiler dots: light on dark backgrounds, dark on light ones
+            int area = (x1 - x0) * (y1 - y0);
+            for (int d = 0; d < area / 18; d++)
+            {
+                int x = rnd.Next(x0, x1), y = rnd.Next(y0, y1);
+                int o = y * stride + x * 4;
+                bool lightBg = px[o] + px[o + 1] + px[o + 2] > 380;
+                byte v = (byte)(lightBg ? rnd.Next(40, 110) : rnd.Next(170, 250));
+                px[o] = px[o + 1] = px[o + 2] = v;
+            }
+        }
+        var bmp = BitmapSource.Create(w, h, src.DpiX, src.DpiY, PixelFormats.Bgra32, null, px, stride);
+        bmp.Freeze();
+        return bmp;
     }
 
     /// <summary>Hover preview, decoded to fit 1440×1040 px.</summary>

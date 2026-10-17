@@ -33,6 +33,11 @@ public static class Secrets
         File.WriteAllBytes(path, Protect(_hmacKey));
     }
 
+    /// <summary>The SQLCipher key of history.db as a raw-key literal (x'…': no slow key derivation on open).
+    /// Derived from the DPAPI-protected secret.key, so only this Windows account can open the database.</summary>
+    public static string DatabaseKeyPragma =>
+        "x'" + Convert.ToHexString(HMACSHA256.HashData(_hmacKey, Encoding.UTF8.GetBytes("clipnest/history.db/v1"))) + "'";
+
     /// <summary>Content hash for ordinary items ("t:" text, "f:" files, "i:" images).</summary>
     public static string PlainHash(string prefix, byte[] data) => prefix + Convert.ToHexString(SHA256.HashData(data))[..32];
     public static string PlainHash(string prefix, string s) => PlainHash(prefix, Encoding.UTF8.GetBytes(s));

@@ -18,9 +18,12 @@ public sealed class Storage : IDisposable
 {
     public const int PreviewChars = 3000;
     private const int SearchChars = 100_000;
-    private const string ItemColumns = "id,kind,preview,rich,image,width,height,hash,source,created,stamp,size,pinned,secret";
+    // regions only for secret images: a CASE keeps SQLite from reading that column (added at the end of the row,
+    // after the possibly long search key) for every other row
+    private const string ItemColumns = "id,kind,preview,rich,image,width,height,hash,source,created,stamp,size,pinned,secret,"
+                                       + "CASE WHEN secret=1 AND kind=2 THEN regions END";
 
-    private readonly SqliteConnection _db;
+    private SqliteConnection _db = null!;
     private long _count = -1;
     public string DataDir { get; }
     public string ImagesDir { get; }
@@ -33,8 +36,7 @@ public sealed class Storage : IDisposable
         Directory.CreateDirectory(ImagesDir);
         DbPath = Path.Combine(dataDir, "history.db");
 
-        _db = new SqliteConnection($"Data Source={DbPath}");
-        _db.Open();
+        OpenEncrypted();
         // secure_delete: freed pages are zeroed, so a deleted or re-encrypted password doesn't linger in the file
         Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA secure_delete=ON; PRAGMA cache_size=-16000; PRAGMA temp_store=MEMORY;");
 
@@ -55,6 +57,7 @@ public sealed class Storage : IDisposable
                 size     INTEGER NOT NULL DEFAULT 0,
                 pinned   INTEGER NOT NULL DEFAULT 0,
                 secret   INTEGER NOT NULL DEFAULT 0,
+                regions  TEXT,
                 search   TEXT
             );
             CREATE TABLE IF NOT EXISTS bodies(
@@ -67,7 +70,150 @@ public sealed class Storage : IDisposable
             CREATE INDEX IF NOT EXISTS ix_items_stamp ON items(pinned DESC, stamp DESC);
             CREATE INDEX IF NOT EXISTS ix_items_kind ON items(kind, pinned DESC, stamp DESC);
             """);
+        if (!TableHasColumn("items", "regions")) Exec("ALTER TABLE items ADD COLUMN regions TEXT");
         EnsureSearchIndex();
+        EncryptPlainImages();
+    }
+
+    // ---------- encryption at rest ----------
+
+    private const string PlainHeader = "SQLite format 3\0";
+
+    /// <summary>A plaintext SQLite file starts with a fixed header; an SQLCipher one is random from byte 0.</summary>
+    private static bool IsPlainSqlite(string path)
+    {
+        if (!File.Exists(path) || new FileInfo(path).Length < 16) return false;
+        var head = new byte[16];
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) fs.ReadExactly(head);
+        return Encoding.ASCII.GetString(head) == PlainHeader;
+    }
+
+    /// <summary>Opens history.db with its SQLCipher key. A database from before encryption is encrypted first;
+    /// one that can't be opened with the key (the key is gone, e.g. Windows password reset by an admin) is set aside,
+    /// not deleted, and a new history starts.</summary>
+    private void OpenEncrypted()
+    {
+        bool plain = IsPlainSqlite(DbPath);
+        if (plain)
+        {
+            try { EncryptExisting(); plain = false; }
+            catch (Exception ex) { Log.Write("encrypting history.db failed, staying unencrypted for now: " + ex.Message); }
+        }
+
+        _db = new SqliteConnection($"Data Source={DbPath};Pooling=False");
+        _db.Open();
+        if (plain) return; // could not encrypt: keep working, try again next start
+
+        Exec($"PRAGMA key = \"{Secrets.DatabaseKeyPragma}\";");
+        try
+        {
+            Exec("SELECT count(*) FROM sqlite_master;");
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 26) // "file is not a database": wrong key
+        {
+            _db.Dispose();
+            var aside = DbPath + ".unreadable-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            foreach (var ext in new[] { "", "-wal", "-shm" })
+                if (File.Exists(DbPath + ext)) File.Move(DbPath + ext, aside + ext);
+            Log.Write("history.db can't be opened with this account's key; set aside as " + Path.GetFileName(aside));
+            _db = new SqliteConnection($"Data Source={DbPath};Pooling=False");
+            _db.Open();
+            Exec($"PRAGMA key = \"{Secrets.DatabaseKeyPragma}\";");
+        }
+    }
+
+    /// <summary>Copies a plaintext database into an encrypted one (sqlcipher_export), then wipes and replaces the original.
+    /// The full-text index is dropped first and rebuilt on the encrypted copy.</summary>
+    private void EncryptExisting()
+    {
+        var tmp = DbPath + ".encrypting";
+        if (File.Exists(tmp)) File.Delete(tmp);
+        using (var c = new SqliteConnection($"Data Source={DbPath};Pooling=False"))
+        {
+            c.Open();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = $"""
+                PRAGMA wal_checkpoint(TRUNCATE);
+                DROP TRIGGER IF EXISTS items_fts_ai; DROP TRIGGER IF EXISTS items_fts_ad; DROP TRIGGER IF EXISTS items_fts_au;
+                DROP TABLE IF EXISTS search_fts;
+                ATTACH DATABASE '{tmp.Replace("'", "''")}' AS enc KEY "{Secrets.DatabaseKeyPragma}";
+                SELECT sqlcipher_export('enc');
+                DETACH DATABASE enc;
+                PRAGMA journal_mode=DELETE;
+                """;
+            cmd.ExecuteNonQuery();
+        }
+        // swap with a fallback: the plaintext original is only wiped once the encrypted copy is in its place
+        var old = DbPath + ".plain-old";
+        foreach (var ext in new[] { "", "-wal", "-shm" })
+            if (File.Exists(DbPath + ext)) File.Move(DbPath + ext, old + ext, true);
+        try
+        {
+            File.Move(tmp, DbPath);
+        }
+        catch
+        {
+            foreach (var ext in new[] { "", "-wal", "-shm" })
+                if (File.Exists(old + ext)) File.Move(old + ext, DbPath + ext, true);
+            throw;
+        }
+        foreach (var ext in new[] { "", "-wal", "-shm" }) Wipe(old + ext);
+        Log.Write("history.db encrypted (SQLCipher)");
+    }
+
+    /// <summary>Overwrites a file with zeros before deleting it (best effort: an SSD may still keep old copies
+    /// of the blocks; only full-disk encryption covers that).</summary>
+    internal static void Wipe(string path)
+    {
+        if (!File.Exists(path)) return;
+        try
+        {
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None))
+            {
+                var zeros = new byte[1 << 16];
+                for (long left = fs.Length; left > 0; left -= zeros.Length)
+                    fs.Write(zeros, 0, (int)Math.Min(zeros.Length, left));
+                fs.Flush(true);
+            }
+        }
+        catch { }
+        File.Delete(path);
+    }
+
+    /// <summary>Images from before every image was encrypted: encrypt them in place, once.</summary>
+    private void EncryptPlainImages()
+    {
+        var rows = new List<(long id, string file)>();
+        using (var sel = _db.CreateCommand())
+        {
+            sel.CommandText = "SELECT id, image FROM items WHERE image LIKE '%.png'";
+            using var r = sel.ExecuteReader();
+            while (r.Read()) rows.Add((r.GetInt64(0), r.GetString(1)));
+        }
+        if (rows.Count == 0) return;
+        using var tx = _db.BeginTransaction();
+        foreach (var (id, file) in rows)
+        {
+            var src = Path.Combine(ImagesDir, file);
+            var encName = Path.ChangeExtension(file, Secrets.EncryptedImageExt);
+            try
+            {
+                if (File.Exists(src))
+                {
+                    File.WriteAllBytes(Path.Combine(ImagesDir, encName), Secrets.Protect(File.ReadAllBytes(src)));
+                    Wipe(src);
+                }
+                using var up = _db.CreateCommand();
+                up.Transaction = tx;
+                up.CommandText = "UPDATE items SET image=$f WHERE id=$id";
+                up.Parameters.AddWithValue("$f", encName);
+                up.Parameters.AddWithValue("$id", id);
+                up.ExecuteNonQuery();
+            }
+            catch (Exception ex) { Log.Write("encrypting image " + file + ": " + ex.Message); }
+        }
+        tx.Commit();
+        Log.Write($"encrypted {rows.Count} image(s)");
     }
 
     /// <summary>Trigram full-text index over items.search: substring search without scanning every row.
@@ -151,7 +297,7 @@ public sealed class Storage : IDisposable
         // huge texts are stored whole, but only their beginning is searchable
         var text = i.Text is { Length: > SearchChars } t ? t[..SearchChars] : i.Text;
         sb.Append(text).Append('\n').Append(i.Files).Append('\n').Append(i.Source);
-        if (i.Kind == ClipKind.Image) sb.Append("\nизображение картинка image");
+        if (i.Kind == ClipKind.Image) sb.Append("\nизображение картинка image\n").Append(i.OcrText); // text read off the picture
         return sb.ToString().ToLowerInvariant();
     }
 
@@ -201,8 +347,8 @@ public sealed class Storage : IDisposable
         {
             cmd.Transaction = tx;
             cmd.CommandText = """
-                INSERT INTO items(kind,preview,rich,image,width,height,hash,source,created,stamp,size,pinned,secret,search)
-                VALUES($k,$p,$rich,$img,$w,$hgt,$h,$src,$c,$s,$size,0,$sec,$q) RETURNING id
+                INSERT INTO items(kind,preview,rich,image,width,height,hash,source,created,stamp,size,pinned,secret,regions,search)
+                VALUES($k,$p,$rich,$img,$w,$hgt,$h,$src,$c,$s,$size,0,$sec,$reg,$q) RETURNING id
                 """;
             cmd.Parameters.AddWithValue("$k", (int)item.Kind);
             cmd.Parameters.AddWithValue("$p", Db(PreviewOf(item)));
@@ -216,6 +362,7 @@ public sealed class Storage : IDisposable
             cmd.Parameters.AddWithValue("$s", ToUnix(now));
             cmd.Parameters.AddWithValue("$size", item.Size);
             cmd.Parameters.AddWithValue("$sec", item.Secret ? 1 : 0);
+            cmd.Parameters.AddWithValue("$reg", Db(item.Secret ? item.Regions : null));
             cmd.Parameters.AddWithValue("$q", SearchKey(item));
             item.Id = (long)cmd.ExecuteScalar()!;
         }
@@ -278,6 +425,14 @@ public sealed class Storage : IDisposable
             where.Add($"instr(search, $q{i}) > 0");
             cmd.Parameters.AddWithValue($"$q{i}", shortTerms[i]);
         }
+        // only 1–2 characters: the index can't help, and scanning every (encrypted) page for a rare pair took ~150 ms
+        // on 20 000 items. Such a short query looks through the most recent items; from 3 characters, everything.
+        // A time boundary rather than an id list: a common pair still stops at the first page of matches.
+        if (terms.Length > 0 && terms.All(t => t.Length < 3) && ShortQueryCutoff() is long cut)
+        {
+            where.Add("(pinned = 1 OR stamp >= $cut)");
+            cmd.Parameters.AddWithValue("$cut", cut);
+        }
         cmd.CommandText = $"SELECT {ItemColumns} FROM items"
             + (where.Count > 0 ? " WHERE " + string.Join(" AND ", where) : "")
             + " ORDER BY pinned DESC, stamp DESC LIMIT $lim OFFSET $off";
@@ -305,6 +460,7 @@ public sealed class Storage : IDisposable
                 Size = r.GetInt64(11),
                 Pinned = r.GetInt64(12) != 0,
                 Secret = r.GetInt64(13) != 0,
+                Regions = r.IsDBNull(14) ? null : r.GetString(14),
                 IsFull = kind == ClipKind.Image,
             });
         }
@@ -312,6 +468,15 @@ public sealed class Storage : IDisposable
     }
 
     private const int FtsCommonThreshold = 300;
+    private const int ShortQueryWindow = 4000;
+
+    /// <summary>The stamp of the 4000th most recent unpinned item, or null when there are fewer.</summary>
+    private long? ShortQueryCutoff()
+    {
+        using var cmd = _db.CreateCommand();
+        cmd.CommandText = $"SELECT stamp FROM items WHERE pinned=0 ORDER BY stamp DESC LIMIT 1 OFFSET {ShortQueryWindow - 1}";
+        return cmd.ExecuteScalar() is long v ? v : null;
+    }
 
     private long CountMatches(string ftsQuery, int cap)
     {
@@ -381,18 +546,20 @@ public sealed class Storage : IDisposable
         {
             hash = secret ? Secrets.Hash(item.Text) : Secrets.PlainHash("t:", item.Text);
         }
-        else if (item.Kind == ClipKind.Image && item.ImagePath is not null && File.Exists(item.ImagePath))
+        else if (item.Kind == ClipKind.Image && item.ImagePath is not null && File.Exists(item.ImagePath)
+                 && !item.ImagePath.EndsWith(Secrets.EncryptedImageExt, StringComparison.OrdinalIgnoreCase))
         {
-            var bytes = Secrets.ReadImage(item.ImagePath);
-            var target = Path.ChangeExtension(item.ImagePath, secret ? Secrets.EncryptedImageExt : ".png");
-            File.WriteAllBytes(target, secret ? Secrets.Protect(bytes) : bytes);
-            if (!string.Equals(target, item.ImagePath, StringComparison.OrdinalIgnoreCase)) File.Delete(item.ImagePath);
+            // every image is stored encrypted; this only catches a file left from before that
+            var target = Path.ChangeExtension(item.ImagePath, Secrets.EncryptedImageExt);
+            File.WriteAllBytes(target, Secrets.Protect(File.ReadAllBytes(item.ImagePath)));
+            Wipe(item.ImagePath);
             image = Path.GetFileName(target);
             item.ImagePath = target;
         }
 
         item.Secret = secret;
         if (secret) { item.Html = null; item.Rtf = null; }
+        else item.Regions = null;
 
         using var tx = _db.BeginTransaction();
         try
@@ -401,7 +568,7 @@ public sealed class Storage : IDisposable
             {
                 cmd.Transaction = tx;
                 cmd.CommandText = "UPDATE items SET secret=$sec, hash=$h, image=$img, preview=$p, search=$q" +
-                                  (secret ? ", rich=0" : "") + " WHERE id=$id";
+                                  (secret ? ", rich=0" : ", regions=NULL") + " WHERE id=$id";
                 cmd.Parameters.AddWithValue("$sec", secret ? 1 : 0);
                 cmd.Parameters.AddWithValue("$h", hash);
                 cmd.Parameters.AddWithValue("$img", Db(image));
@@ -430,6 +597,33 @@ public sealed class Storage : IDisposable
         item.PreviewText = PreviewOf(item);
         // push the old plaintext pages out of the WAL file
         Exec("PRAGMA wal_checkpoint(TRUNCATE);");
+    }
+
+    /// <summary>Result of a later OCR pass over an image (context menu): secrets found → the image becomes secret
+    /// (encrypted) with those regions blurred, or the whole picture when there are too many; otherwise its text
+    /// becomes searchable.</summary>
+    public void ApplyScan(ClipItem item, ImageScan scan)
+    {
+        if (item.Kind != ClipKind.Image) return;
+        if (scan.Secrets.Count > 0 || scan.WholeImage)
+        {
+            if (!item.Secret) SetSecret(item, true);
+            item.Regions = scan.WholeImage ? null : ImageScanner.Serialize(scan.Secrets);
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = "UPDATE items SET regions=$r WHERE id=$id";
+            cmd.Parameters.AddWithValue("$r", Db(item.Regions));
+            cmd.Parameters.AddWithValue("$id", item.Id);
+            cmd.ExecuteNonQuery();
+        }
+        else if (!item.Secret)
+        {
+            item.OcrText = scan.Text;
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = "UPDATE items SET search=$q WHERE id=$id";
+            cmd.Parameters.AddWithValue("$q", SearchKey(item));
+            cmd.Parameters.AddWithValue("$id", item.Id);
+            cmd.ExecuteNonQuery();
+        }
     }
 
     public void Touch(long id)

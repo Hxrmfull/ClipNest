@@ -472,7 +472,48 @@ public partial class MainWindow : Window
         }
         App.Monitor.IgnoreOwnChange();
         if (App.Settings.MoveUsedToTop) App.Storage.Touch(item.Id);
+        if (item.Secret && App.Settings.ClearSecretSeconds > 0) ClearLater(App.Settings.ClearSecretSeconds);
         return true;
+    }
+
+    /// <summary>Takes a pasted secret off the system clipboard after a while, unless something else was copied since.</summary>
+    private static void ClearLater(int seconds)
+    {
+        uint seq = Native.GetClipboardSequenceNumber();
+        var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(seconds) };
+        t.Tick += (_, _) =>
+        {
+            t.Stop();
+            if (Native.GetClipboardSequenceNumber() != seq) return;
+            try
+            {
+                Clipboard.Clear();
+                App.Monitor.IgnoreOwnChange();
+            }
+            catch { }
+        };
+        t.Start();
+    }
+
+    private static string ViewDir => System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ClipNest-view");
+
+    /// <summary>Images are stored encrypted, so "open" hands the viewer a temporary decrypted copy, deleted again
+    /// after a couple of minutes (and on exit).</summary>
+    private static string? WriteViewCopy(ClipItem item)
+    {
+        if (item.ImagePath is null || !System.IO.File.Exists(item.ImagePath)) return null;
+        System.IO.Directory.CreateDirectory(ViewDir);
+        var file = System.IO.Path.Combine(ViewDir, System.IO.Path.GetFileNameWithoutExtension(item.ImagePath) + ".png");
+        System.IO.File.WriteAllBytes(file, Secrets.ReadImage(item.ImagePath));
+        var t = new DispatcherTimer { Interval = TimeSpan.FromMinutes(2) };
+        t.Tick += (_, _) => { t.Stop(); try { System.IO.File.Delete(file); } catch { } };
+        t.Start();
+        return file;
+    }
+
+    public static void CleanViewCopies()
+    {
+        try { if (System.IO.Directory.Exists(ViewDir)) System.IO.Directory.Delete(ViewDir, true); } catch { }
     }
 
     private async void Paste(ClipItem item, bool plain, string? overrideText = null)
@@ -551,6 +592,25 @@ public partial class MainWindow : Window
         if (_items.FirstOrDefault(i => i.Secret) is { } s) ToggleReveal(s);
     }
 
+    /// <summary>OCR pass over an image copied before scanning was on (or with it off).</summary>
+    private async void RescanImage(ClipItem item)
+    {
+        if (item.ImagePath is not { } path) return;
+        int w = item.Width, h = item.Height;
+        try
+        {
+            var scan = await Task.Run(async () => await ImageScanner.ScanAsync(ClipboardMonitor.DecodeBgra(Secrets.ReadImage(path)), w, h));
+            if (scan is null) return;
+            App.Storage.ApplyScan(item, scan);
+            Log.Write($"rescan: {scan.Secrets.Count} secret(s), whole={scan.WholeImage}, {scan.Milliseconds:0} ms");
+        }
+        catch (Exception ex)
+        {
+            Log.Write("rescan: " + ex.Message);
+        }
+        if (IsVisible) Reload(item.Id);
+    }
+
     private void TogglePin(ClipItem item)
     {
         item.Pinned = !item.Pinned;
@@ -581,7 +641,7 @@ public partial class MainWindow : Window
                     Process.Start(new ProcessStartInfo(item.Text!.Trim()) { UseShellExecute = true });
                     break;
                 case ClipKind.Image when item.ImagePath is not null && !item.Secret:
-                    Process.Start(new ProcessStartInfo(item.ImagePath) { UseShellExecute = true });
+                    if (WriteViewCopy(item) is { } copy) Process.Start(new ProcessStartInfo(copy) { UseShellExecute = true });
                     break;
                 case ClipKind.Files when item.FileList.Length > 0:
                     Process.Start("explorer.exe", $"/select,\"{item.FileList[0]}\"");
@@ -890,7 +950,10 @@ public partial class MainWindow : Window
         switch (item.Kind)
         {
             case ClipKind.Link: Add("Открыть в браузере", "", () => Open(item)); break;
-            case ClipKind.Image when !item.Secret: Add("Открыть изображение", "", () => Open(item)); break;
+            case ClipKind.Image when !item.Secret:
+                Add("Открыть изображение", "", () => Open(item));
+                if (ImageScanner.Available) Add("Проверить на секреты", "\uE721", () => RescanImage(item));
+                break;
             case ClipKind.Files: Add("Показать в проводнике", "", () => Open(item)); break;
         }
 
