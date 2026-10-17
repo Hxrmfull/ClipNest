@@ -32,6 +32,10 @@ public partial class MainWindow : Window
     private bool _menuOpen;
     private long _shownAt;
     private IntPtr _prevForeground;
+    /// <summary>Shown like the built-in clipboard: without taking the focus. The app keeps its caret,
+    /// keys reach us through the keyboard hook, a pick pastes at once.</summary>
+    private bool _passive;
+    private readonly DispatcherTimer _caretBlink;
     private readonly RadioButton[] _chips;
     private readonly OutsideClickWatcher _outside;
     private readonly Native.WinEventProc _foregroundProc; // kept alive for the GC
@@ -48,6 +52,14 @@ public partial class MainWindow : Window
 
         _searchTimer = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(90) };
         _searchTimer.Tick += (_, _) => { _searchTimer.Stop(); Reload(); };
+        _caretBlink = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(530) };
+        _caretBlink.Tick += (_, _) => FakeCaret.Opacity = FakeCaret.Opacity > 0 ? 0 : 1;
+        App.Hook.PopupKeyPressed += OnPopupKey;
+        SearchBox.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            // a click in the search field switches to normal editing (caret, selection, Ctrl+A…)
+            if (_passive && FindAncestor<ButtonBase>(e.OriginalSource as DependencyObject) is null) EnterActiveMode();
+        };
 
         Deactivated += (_, _) => { if (!_menuOpen && !KeepOpen) OnFocusLost(IntPtr.Zero); };
         // Deactivated never comes if Windows didn't really give us the foreground (or took it back quietly):
@@ -65,7 +77,9 @@ public partial class MainWindow : Window
         var hwnd = new WindowInteropHelper(this).Handle;
         // tool window: no Alt+Tab entry; rounded corners and instant show/hide (our own animation is shorter)
         var ex = (long)Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE);
-        Native.SetWindowLongPtr(hwnd, Native.GWL_EXSTYLE, new IntPtr((ex | Native.WS_EX_TOOLWINDOW) & ~Native.WS_EX_APPWINDOW));
+        // no activation on click either: like the built-in panel, the app being typed in keeps its focus
+        Native.SetWindowLongPtr(hwnd, Native.GWL_EXSTYLE,
+            new IntPtr((ex | Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE) & ~Native.WS_EX_APPWINDOW));
         int round = DWMWCP_ROUND;
         Native.DwmSetWindowAttribute(hwnd, Native.DWMWA_WINDOW_CORNER_PREFERENCE, ref round, sizeof(int));
         int off = 1;
@@ -84,7 +98,6 @@ public partial class MainWindow : Window
         Show();
         UpdateLayout();
         Hide();
-        ShowActivated = true;
         _items.Clear();
     }
 
@@ -108,10 +121,18 @@ public partial class MainWindow : Window
         PositionNearCaret();
         _shownAt = Environment.TickCount64;
         Body.Opacity = 0;
+        // opened from the tray there is no text field to keep focused: then work as a normal window
+        _passive = !KeepOpen && CanPasteInto(_prevForeground);
         Show();
-        ForceForeground();
-        Activate();
-        Keyboard.Focus(Search);
+        if (_passive)
+        {
+            App.Hook.CapturePopupKeys = true;
+            ShowFakeCaret(true);
+        }
+        else
+        {
+            EnterActiveMode();
+        }
         UpdateDust();
         if (IsVisible) WatchOutside(true); // not if focus was already lost while showing
 
@@ -131,6 +152,8 @@ public partial class MainWindow : Window
     public void HidePopup()
     {
         if (!IsVisible) return;
+        App.Hook.CapturePopupKeys = false;
+        ShowFakeCaret(false);
         WatchOutside(false);
         Hide();
         // drop the items (and their thumbnails) while hidden; the next open reloads anyway
@@ -145,19 +168,39 @@ public partial class MainWindow : Window
     private void OnFocusLost(IntPtr thief)
     {
         if (!IsVisible) return;
-        if (Environment.TickCount64 - _shownAt < 500)
+        var thiefWindow = thief != IntPtr.Zero ? thief : Native.GetForegroundWindow();
+        // Start and Windows search are always the user's own doing: close, as for any other app
+        if (Environment.TickCount64 - _shownAt < 500 && !IsStartOrSearch(thiefWindow))
         {
             Log.Write("focus taken right after opening by " + Describe(thief != IntPtr.Zero ? thief : Native.GetForegroundWindow()) + "; taking it back");
+            var target = _passive ? _prevForeground : new WindowInteropHelper(this).Handle;
             Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
             {
-                if (!IsVisible) return;
-                ForceForeground();
-                Activate();
-                Keyboard.Focus(Search);
+                if (!IsVisible || Native.GetForegroundWindow() == target) return;
+                BringToForeground(target);
+                if (!_passive)
+                {
+                    Activate();
+                    Keyboard.Focus(Search);
+                }
             });
             return;
         }
         HidePopup();
+    }
+
+    private static readonly string[] StartHosts = { "StartMenuExperienceHost", "SearchHost", "SearchApp", "ShellExperienceHost" };
+
+    private static bool IsStartOrSearch(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return false;
+        Native.GetWindowThreadProcessId(hwnd, out var pid);
+        try
+        {
+            using var p = Process.GetProcessById((int)pid);
+            return StartHosts.Contains(p.ProcessName, StringComparer.OrdinalIgnoreCase);
+        }
+        catch { return false; }
     }
 
     private static string Describe(IntPtr hwnd)
@@ -229,10 +272,12 @@ public partial class MainWindow : Window
     public void UpdatePausedState() =>
         PausedBadge.Visibility = App.Monitor.Paused ? Visibility.Visible : Visibility.Collapsed;
 
-    private void ForceForeground()
+    private void ForceForeground() => BringToForeground(new WindowInteropHelper(this).Handle);
+
+    /// <summary>Makes a window the foreground one: ours for search editing, or the app to paste into.</summary>
+    private static void BringToForeground(IntPtr hwnd)
     {
-        var hwnd = new WindowInteropHelper(this).Handle;
-        // usually allowed outright: the Win+V hook has just injected a key from this process.
+        // usually allowed outright: this process got the last input (the hook's key or a click on the popup).
         // AttachThreadInput is only the fallback, as it can leave the activation state of both threads confused.
         if (Native.SetForegroundWindow(hwnd) && Native.GetForegroundWindow() == hwnd) return;
         var fg = Native.GetForegroundWindow();
@@ -434,12 +479,16 @@ public partial class MainWindow : Window
         HidePopup();
         if (!CanPasteInto(target)) return; // it's on the clipboard; nothing to paste into
 
-        Native.SetForegroundWindow(target);
-        // wait for the switch instead of a fixed pause: usually a frame or two
-        var sw = Stopwatch.StartNew();
-        while (Native.GetForegroundWindow() != target && sw.ElapsedMilliseconds < 250)
-            await Task.Delay(4);
-        await Task.Delay(12); // let the target restore focus to its text field
+        // shown without focus, the app still has it, caret and all: paste right away, like the built-in panel.
+        // Only after search editing (or a drag) does the focus have to go back first.
+        if (Native.GetForegroundWindow() != target)
+        {
+            BringToForeground(target);
+            var sw = Stopwatch.StartNew();
+            while (Native.GetForegroundWindow() != target && sw.ElapsedMilliseconds < 300)
+                await Task.Delay(4);
+            await Task.Delay(25); // let the app put the focus back into its text field
+        }
         InputSender.SendPaste();
     }
 
@@ -546,45 +595,67 @@ public partial class MainWindow : Window
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         var mods = Keyboard.Modifiers;
-        bool ctrl = mods.HasFlag(ModifierKeys.Control);
-        bool shift = mods.HasFlag(ModifierKeys.Shift);
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (HandleKey(key, mods.HasFlag(ModifierKeys.Control), mods.HasFlag(ModifierKeys.Shift))) e.Handled = true;
+    }
 
+    /// <summary>Keys taken by the hook while the popup is shown without focus.</summary>
+    private void OnPopupKey(PopupKey k)
+    {
+        if (!IsVisible || !_passive) return;
+        if (_menuOpen)
+        {
+            if (k.Vk == Native.VK_ESCAPE) ItemMenu.IsOpen = false;
+            return;
+        }
+        if (k.Char != '\0')
+        {
+            Search.Text += k.Char;
+            return;
+        }
+        var key = KeyInterop.KeyFromVirtualKey(k.Vk);
+        switch (key)
+        {
+            case Key.Back:
+                if (Search.Text.Length > 0) Search.Text = k.Ctrl ? "" : Search.Text[..^1];
+                return;
+            case Key.Home: Select(0); return;
+            case Key.End: Select(_items.Count - 1); return;
+            case Key.Left or Key.Right: return;
+        }
+        HandleKey(key, k.Ctrl, k.Shift);
+    }
+
+    private bool HandleKey(Key key, bool ctrl, bool shift)
+    {
         switch (key)
         {
             case Key.Escape:
                 if (Search.Text.Length > 0) Search.Text = "";
                 else HidePopup();
-                e.Handled = true;
-                return;
-            case Key.Down: Move(1); e.Handled = true; return;
-            case Key.Up: Move(-1); e.Handled = true; return;
-            case Key.PageDown: Move(6); e.Handled = true; return;
-            case Key.PageUp: Move(-6); e.Handled = true; return;
+                return true;
+            case Key.Down: Move(1); return true;
+            case Key.Up: Move(-1); return true;
+            case Key.PageDown: Move(6); return true;
+            case Key.PageUp: Move(-6); return true;
             case Key.Enter:
                 if (Selected is { } s) Paste(s, shift);
-                e.Handled = true;
-                return;
+                return true;
             case Key.Tab:
                 CycleFilter(shift ? -1 : 1);
-                e.Handled = true;
-                return;
+                return true;
             case Key.Delete when Selected is { } d && Search.CaretIndex >= Search.Text.Length && Search.SelectionLength == 0:
                 DeleteItem(d);
-                e.Handled = true;
-                return;
+                return true;
             case Key.H when ctrl && Selected is { } h:
                 ToggleHidden(h);
-                e.Handled = true;
-                return;
+                return true;
             case Key.P when ctrl && Selected is { } p:
                 TogglePin(p);
-                e.Handled = true;
-                return;
+                return true;
             case Key.C when ctrl && Search.SelectionLength == 0 && Selected is { } c:
                 CopyOnly(c);
-                e.Handled = true;
-                return;
+                return true;
         }
 
         if (ctrl)
@@ -598,9 +669,51 @@ public partial class MainWindow : Window
             if (n >= 0 && n < _items.Count)
             {
                 Paste(_items[n], shift);
-                e.Handled = true;
+                return true;
             }
         }
+        return false;
+    }
+
+    /// <summary>Leaves the focus-less mode: the popup takes the focus so the search field can be edited normally.</summary>
+    private void EnterActiveMode()
+    {
+        _passive = false;
+        App.Hook.CapturePopupKeys = false;
+        ShowFakeCaret(false);
+        ForceForeground();
+        Activate();
+        Keyboard.Focus(Search);
+        Search.CaretIndex = Search.Text.Length;
+    }
+
+    /// <summary>Without focus the search box draws no caret, so a blinking one is drawn after the text.</summary>
+    private void ShowFakeCaret(bool on)
+    {
+        _caretBlink.Stop();
+        FakeCaret.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        if (!on) return;
+        FakeCaret.Opacity = 1;
+        PlaceFakeCaret();
+        _caretBlink.Start();
+    }
+
+    private void PlaceFakeCaret()
+    {
+        if (FakeCaret.Visibility != Visibility.Visible) return;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        {
+            var r = Search.GetRectFromCharacterIndex(Search.Text.Length);
+            double x = r.IsEmpty || double.IsInfinity(r.X) ? 2 : r.X;
+            FakeCaret.Margin = new Thickness(x, 0, 0, 0);
+            FakeCaret.Opacity = 1;
+            if (_caretBlink.IsEnabled) { _caretBlink.Stop(); _caretBlink.Start(); }
+        });
+    }
+
+    private void FocusSearch()
+    {
+        if (!_passive) Keyboard.Focus(Search);
     }
 
     private void CycleFilter(int dir)
@@ -622,7 +735,7 @@ public partial class MainWindow : Window
             _ => ClipFilter.All,
         };
         if (IsVisible) Reload();
-        Keyboard.Focus(Search);
+        FocusSearch();
     }
 
     private void Search_TextChanged(object sender, TextChangedEventArgs e)
@@ -630,6 +743,7 @@ public partial class MainWindow : Window
         bool empty = Search.Text.Length == 0;
         Placeholder.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         ClearSearch.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
+        PlaceFakeCaret();
         if (!IsVisible) return;
         _searchTimer.Stop();
         _searchTimer.Start();
@@ -638,7 +752,7 @@ public partial class MainWindow : Window
     private void ClearSearch_Click(object sender, RoutedEventArgs e)
     {
         Search.Text = "";
-        Keyboard.Focus(Search);
+        FocusSearch();
     }
 
     private static T? FindAncestor<T>(DependencyObject? d) where T : DependencyObject
@@ -666,19 +780,19 @@ public partial class MainWindow : Window
     private void Reveal_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is ClipItem { Secret: true } item) ToggleReveal(item);
-        Keyboard.Focus(Search);
+        FocusSearch();
     }
 
     private void Pin_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is ClipItem item) TogglePin(item);
-        Keyboard.Focus(Search);
+        FocusSearch();
     }
 
     private void Delete_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is ClipItem item) DeleteItem(item);
-        Keyboard.Focus(Search);
+        FocusSearch();
     }
 
     /// <summary>The window is dragged by the grab strip or any empty spot; buttons, chips, the search field
@@ -687,13 +801,9 @@ public partial class MainWindow : Window
     {
         var src = e.OriginalSource as DependencyObject;
         if (e.Handled || FindAncestor<ListBox>(src) is not null || FindAncestor<ButtonBase>(src) is not null) return;
-        if (IsInside(src, SearchBox))
-        {
-            Keyboard.Focus(Search);
-            return;
-        }
+        if (IsInside(src, SearchBox)) return; // handled by SearchBox.PreviewMouseLeftButtonDown
         try { DragMove(); } catch (InvalidOperationException) { }
-        Keyboard.Focus(Search);
+        FocusSearch();
     }
 
     private static bool IsInside(DependencyObject? d, DependencyObject ancestor)
@@ -730,6 +840,7 @@ public partial class MainWindow : Window
     private void ItemMenu_Closed(object sender, RoutedEventArgs e)
     {
         _menuOpen = false;
+        if (_passive) return; // never had the focus: nothing to restore, and inactive is normal here
         if (IsVisible && !IsActive) HidePopup();
         else Keyboard.Focus(Search);
     }

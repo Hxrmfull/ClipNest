@@ -1,31 +1,50 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows.Threading;
 
 namespace ClipNest.Services;
 
-/// <summary>Low-level keyboard hook that takes over Win+V. RegisterHotKey can't be used:
-/// Explorer already owns that combination.
-/// The hook lives on its own thread with its own message loop: Windows calls it for every key
-/// press system-wide and waits for the answer, so it must never queue behind UI work.</summary>
+/// <summary>A key the popup took while it is shown without focus (see <see cref="KeyboardHook.CapturePopupKeys"/>).</summary>
+public readonly record struct PopupKey(int Vk, char Char, bool Ctrl, bool Shift);
+
+/// <summary>Low-level keyboard hook. It takes over Win+V (RegisterHotKey can't: Explorer owns that combination)
+/// and, while the popup is open without focus, takes the keys meant for it: the popup works like the built-in
+/// clipboard panel, the app you were typing in keeps its focus and caret, so pasting is instant.
+/// The hook lives on its own thread with its own message loop: Windows calls it for every key press
+/// system-wide and waits for the answer, so it must never queue behind UI work.</summary>
 public sealed class KeyboardHook : IDisposable
 {
     private readonly Native.LowLevelKeyboardProc _proc; // kept alive so the GC doesn't collect the callback
     private readonly Dispatcher _dispatcher;
     private readonly Thread _thread;
     private readonly ManualResetEventSlim _ready = new();
+    private readonly HashSet<uint> _swallowedDown = new(); // hook thread only: their key-ups are swallowed too
+    private readonly byte[] _keyState = new byte[256];
+    private readonly StringBuilder _charBuf = new(8);
     private uint _threadId;
     private IntPtr _hook;
     private bool _swallowing;
     private volatile bool _enabled = true;
+    private volatile bool _capture;
 
     public event Action? WinVPressed;
+    public event Action<PopupKey>? PopupKeyPressed;
 
     public bool Enabled
     {
         get => _enabled;
         set => _enabled = value;
+    }
+
+    /// <summary>While true, navigation keys, Enter/Esc/Tab/Del/Backspace, the popup's Ctrl shortcuts and printable
+    /// characters are swallowed and raised as <see cref="PopupKeyPressed"/> on the UI thread.</summary>
+    public bool CapturePopupKeys
+    {
+        get => _capture;
+        set => _capture = value;
     }
 
     public KeyboardHook(Dispatcher dispatcher)
@@ -63,30 +82,91 @@ public sealed class KeyboardHook : IDisposable
         if (nCode >= 0)
         {
             var k = Marshal.PtrToStructure<Native.KBDLLHOOKSTRUCT>(lParam);
-            if (k.vkCode == Native.VK_V && k.dwExtraInfo != Native.InjectedMarker)
+            if (k.dwExtraInfo != Native.InjectedMarker)
             {
                 int msg = (int)wParam;
                 bool down = msg is Native.WM_KEYDOWN or Native.WM_SYSKEYDOWN;
                 bool up = msg is Native.WM_KEYUP or Native.WM_SYSKEYUP;
 
-                // a key-up we never saw (secure desktop, lock screen) must not leave V swallowed
-                if (_swallowing && down && !Win()) _swallowing = false;
-
-                if (_enabled && down && !_swallowing && Win() && !Ctrl() && !Alt() && !Shift())
+                if (k.vkCode == Native.VK_V)
                 {
-                    _swallowing = true;
-                    InputSender.SendMaskKey();
-                    _dispatcher.BeginInvoke(DispatcherPriority.Send, () => WinVPressed?.Invoke());
+                    // a key-up we never saw (secure desktop, lock screen) must not leave V swallowed
+                    if (_swallowing && down && !Win()) _swallowing = false;
+
+                    if (_enabled && down && !_swallowing && Win() && !Ctrl() && !Alt() && !Shift())
+                    {
+                        _swallowing = true;
+                        InputSender.SendMaskKey();
+                        _dispatcher.BeginInvoke(DispatcherPriority.Send, () => WinVPressed?.Invoke());
+                        return new IntPtr(1);
+                    }
+                    if (_swallowing)
+                    {
+                        if (up) _swallowing = false;
+                        return new IntPtr(1); // autorepeat and the key-up of a swallowed V
+                    }
+                }
+
+                if (down && _capture && TryCapture(k, out var key))
+                {
+                    _swallowedDown.Add(k.vkCode);
+                    _dispatcher.BeginInvoke(DispatcherPriority.Send, () => PopupKeyPressed?.Invoke(key));
                     return new IntPtr(1);
                 }
-                if (_swallowing)
-                {
-                    if (up) _swallowing = false;
-                    return new IntPtr(1); // autorepeat and the key-up of a swallowed V
-                }
+                // the app never saw the key-down, so it must not get a lone key-up either (even after the popup closed)
+                if (up && _swallowedDown.Remove(k.vkCode)) return new IntPtr(1);
             }
         }
         return Native.CallNextHookEx(_hook, nCode, wParam, lParam);
+    }
+
+    /// <summary>Decides on the hook thread, without asking the UI, whether a key belongs to the popup.</summary>
+    private bool TryCapture(Native.KBDLLHOOKSTRUCT k, out PopupKey key)
+    {
+        key = default;
+        if (Win()) return false; // Win+arrows and other system shortcuts stay with Windows
+        bool ctrl = Ctrl(), alt = Alt(), shift = Shift();
+        bool altGr = ctrl && alt && (Native.GetAsyncKeyState(Native.VK_RMENU) & 0x8000) != 0;
+        int vk = (int)k.vkCode;
+
+        switch (vk)
+        {
+            case Native.VK_UP or Native.VK_DOWN or Native.VK_PRIOR or Native.VK_NEXT or Native.VK_HOME or Native.VK_END
+                or Native.VK_LEFT or Native.VK_RIGHT or Native.VK_RETURN or Native.VK_ESCAPE or Native.VK_TAB
+                or Native.VK_DELETE or Native.VK_BACK:
+                if (alt && !altGr) return false;
+                key = new PopupKey(vk, '\0', ctrl, shift);
+                return true;
+        }
+
+        if (ctrl && !altGr)
+        {
+            // the popup's own shortcuts; everything else with Ctrl goes to the app as usual
+            bool mine = vk is 'P' or 'H' or 'C' or (>= '1' and <= '9') or (>= Native.VK_NUMPAD1 and <= Native.VK_NUMPAD9);
+            if (mine) key = new PopupKey(vk, '\0', true, shift);
+            return mine;
+        }
+        if (alt && !altGr) return false;
+
+        char c = ToChar(k, shift, altGr);
+        if (c == '\0' || char.IsControl(c)) return false;
+        key = new PopupKey(vk, c, false, shift);
+        return true;
+    }
+
+    /// <summary>The character the key types in the layout of the app being typed in (Russian, Polish with AltGr…).</summary>
+    private char ToChar(Native.KBDLLHOOKSTRUCT k, bool shift, bool altGr)
+    {
+        Array.Clear(_keyState);
+        if (shift) _keyState[Native.VK_SHIFT] = 0x80;
+        if (altGr) { _keyState[Native.VK_CONTROL] = 0x80; _keyState[Native.VK_MENU] = 0x80; }
+        if ((Native.GetKeyState(Native.VK_CAPITAL) & 1) != 0) _keyState[Native.VK_CAPITAL] = 0x01;
+        var fg = Native.GetForegroundWindow();
+        var hkl = Native.GetKeyboardLayout(Native.GetWindowThreadProcessId(fg, out _));
+        _charBuf.Clear();
+        // flag 4: don't touch the keyboard state (dead keys) of the system
+        int n = Native.ToUnicodeEx(k.vkCode, k.scanCode, _keyState, _charBuf, _charBuf.Capacity, 4, hkl);
+        return n == 1 ? _charBuf[0] : '\0';
     }
 
     private static bool Win() => (Native.GetAsyncKeyState(Native.VK_LWIN) & 0x8000) != 0 || (Native.GetAsyncKeyState(Native.VK_RWIN) & 0x8000) != 0;

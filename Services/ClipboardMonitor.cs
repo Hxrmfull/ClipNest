@@ -46,7 +46,16 @@ public sealed class ClipboardMonitor : IDisposable
         _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
         _debounce.Tick += async (_, _) => { _debounce.Stop(); await CaptureAsync(); };
 
-        var p = new HwndSourceParameters("ClipNestClipboardListener") { ParentWindow = new IntPtr(-3) /* HWND_MESSAGE */ };
+        // a message-only window, created hidden and non-activatable: HwndSourceParameters defaults to WS_VISIBLE,
+        // and a visible one took the foreground when ClipNest started, leaving the user's typing nowhere
+        var p = new HwndSourceParameters("ClipNestClipboardListener")
+        {
+            ParentWindow = new IntPtr(-3), // HWND_MESSAGE
+            WindowStyle = 0,
+            ExtendedWindowStyle = (int)(Native.WS_EX_NOACTIVATE | Native.WS_EX_TOOLWINDOW),
+            Width = 0,
+            Height = 0,
+        };
         _hwnd = new HwndSource(p);
         _hwnd.AddHook(WndProc);
         if (!Native.AddClipboardFormatListener(_hwnd.Handle))
