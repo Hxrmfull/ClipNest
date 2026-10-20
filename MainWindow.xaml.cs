@@ -64,15 +64,20 @@ public partial class MainWindow : Window
             else if (Native.GetFocus() != new WindowInteropHelper(this).Handle) { ForceForeground(); TakeKeyboardFocus(); }
         };
 
-        Deactivated += (_, _) => { if (!ItemMenu.IsOpen && !KeepOpen) OnFocusLost(IntPtr.Zero); };
+        Deactivated += (_, _) => { if (!ItemMenu.IsOpen && !KeepOpen && !_sizing) OnFocusLost(IntPtr.Zero); };
         // Deactivated never comes if Windows didn't really give us the foreground (or took it back quietly):
         // then a click on the desktop or the Start menu left the popup open until it was clicked again.
         // So also close on any click outside and on any other app taking the foreground.
         _outside = new OutsideClickWatcher(Dispatcher);
-        _outside.OutsideClick += () => { if (!KeepOpen) HidePopup(); };
-        _foregroundProc = (_, _, hwnd, _, _, _, _) => { if (!KeepOpen && hwnd != IntPtr.Zero) OnFocusLost(hwnd); };
+        _outside.OutsideClick += () => { if (!KeepOpen && !_sizing) HidePopup(); };
+        _foregroundProc = (_, _, hwnd, _, _, _, _) => { if (!KeepOpen && !_sizing && hwnd != IntPtr.Zero) OnFocusLost(hwnd); };
         SourceInitialized += (_, _) => SetupNativeWindow();
         List.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(OnListScroll));
+        // made narrower while shown (sizing mode): the cards must shrink with it, see ClipList.Relayout
+        List.SizeChanged += (_, e) =>
+        {
+            if (IsVisible && e.WidthChanged && e.NewSize.Width < e.PreviousSize.Width - 0.5) _items.Relayout();
+        };
     }
 
     private void SetupNativeWindow()
@@ -108,6 +113,11 @@ public partial class MainWindow : Window
 
     public void ShowPopup()
     {
+        if (_sizing && IsVisible)
+        {
+            ForceForeground();
+            return;
+        }
         if (IsVisible)
         {
             HidePopup();
@@ -125,7 +135,7 @@ public partial class MainWindow : Window
         _shownAt = Environment.TickCount64;
         Body.Opacity = 0;
         // opened from the tray there is no text field to keep focused: then work as a normal window
-        _passive = !KeepOpen && CanPasteInto(_prevForeground);
+        _passive = !KeepOpen && !_sizing && CanPasteInto(_prevForeground);
         Show();
         if (_passive)
         {
@@ -143,6 +153,24 @@ public partial class MainWindow : Window
         Body.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(90)));
         ContentShift.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(6, 0, TimeSpan.FromMilliseconds(140)) { EasingFunction = ease });
     }
+
+    /// <summary>For --layoutcheck: shows the popup off-screen, sized as on a monitor with this work area (physical
+    /// pixels) and DPI, without taking the foreground or the keyboard. Called again, it only re-sizes.</summary>
+    internal void ShowForLayoutCheck(Native.RECT work, double dpi)
+    {
+        KeepOpen = true;
+        ApplySize(dpi, work, App.Settings.PopupWidth, App.Settings.PopupHeight);
+        UpdateSizeLabel();
+        if (IsVisible) return;
+        Reload();
+        UpdatePausedState();
+        Native.SetWindowPos(new WindowInteropHelper(this).EnsureHandle(), IntPtr.Zero, -12000, -12000, 0, 0,
+            Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+        Show();
+        UpdateDust();
+    }
+
+    internal double AppliedScale => _appliedScale;
 
     /// <summary>For --screencheck: open at a fixed screen position (physical pixels).</summary>
     public void ShowPopupAt(int x, int y)
@@ -300,6 +328,135 @@ public partial class MainWindow : Window
         }
     }
 
+    // the narrowest/lowest the popup may get (at 100%): the filter chips, the footer hints and a few cards must still fit
+    public const int MinWidth100 = 400, MinHeight100 = 380;
+    /// <summary>The popup never gets bigger than this share of the monitor's work area.</summary>
+    private const double MaxShare = 0.9;
+    private double _appliedScale = 1;
+    private bool _sizing;
+    private double _maxW = double.MaxValue, _maxH = double.MaxValue;
+
+    /// <summary>Raised when sizing mode ends; true if the new size was kept.</summary>
+    public event Action<bool>? SizingEnded;
+    public bool IsSizing => _sizing;
+
+    /// <summary>Sizes the popup for the monitor it opens on. The whole content is scaled by the size chosen in
+    /// settings, so text, cards and images keep their proportions; the scale is lowered only on a screen where even
+    /// the smallest popup wouldn't fit. A width or height picked on a bigger monitor is cut to 90% of this one's
+    /// work area: the list then just shows fewer cards. Sizing mode stops dragging at the same 90%, so a size
+    /// picked there opens exactly like that, content included.</summary>
+    private void ApplySize(double dpiScale, Native.RECT work, double baseW, double baseH)
+    {
+        double workW = (work.Right - work.Left) / dpiScale, workH = (work.Bottom - work.Top) / dpiScale;
+        double s = Math.Min(Math.Clamp(App.Settings.PopupScale, 50, 200) / 100.0,
+                            Math.Min(workW * MaxShare / MinWidth100, workH * MaxShare / MinHeight100));
+        _maxW = workW * MaxShare;
+        _maxH = workH * MaxShare;
+        if (Math.Abs(s - _appliedScale) > 0.001)
+        {
+            _appliedScale = s;
+            bool native = Math.Abs(s - 1) < 0.001;
+            var scale = new ScaleTransform(s, s);
+            scale.Freeze(); // shared with the sizing strip
+            Shell.LayoutTransform = native ? Transform.Identity : scale;
+            // the sizing strip scales with the content and covers exactly its grip and search row
+            SizingBanner.LayoutTransform = Shell.LayoutTransform;
+            SizingBanner.MinHeight = Grip.Height + SearchBox.Height - SizingBanner.Margin.Top / s;
+            // pixel-snapped "Display" text only looks right unscaled; scaled text is rendered as "Ideal"
+            TextOptions.SetTextFormattingMode(this, native ? TextFormattingMode.Display : TextFormattingMode.Ideal);
+        }
+        // Max/Min rather than Clamp: rounding can put the minimum a hair above the maximum
+        Width = Math.Max(MinWidth100 * s, Math.Min(Math.Max(MinWidth100, baseW) * s, _maxW));
+        Height = Math.Max(MinHeight100 * s, Math.Min(Math.Max(MinHeight100, baseH) * s, _maxH));
+    }
+
+    private void ApplySize(IntPtr monitor, double baseW, double baseH)
+    {
+        var mi = new Native.MONITORINFO { cbSize = Marshal.SizeOf<Native.MONITORINFO>() };
+        Native.GetMonitorInfo(monitor, ref mi);
+        double dpi = Native.GetDpiForMonitor(monitor, 0, out var dx, out _) == 0 ? dx / 96.0 : 1;
+        ApplySize(dpi, mi.rcWork, baseW, baseH);
+    }
+
+    // ---------- sizing mode ----------
+
+    /// <summary>Shows the popup next to <paramref name="near"/> (the settings window) with drag handles on its
+    /// right and bottom edges. The size is kept on Enter / <see cref="EndSizing"/>(true), dropped on Esc.</summary>
+    public void BeginSizing(IntPtr near)
+    {
+        if (_sizing) { ForceForeground(); return; }
+        if (IsVisible) HidePopup();
+        _sizing = true;
+        ShowPopup();
+        SizingOverlay.Visibility = Visibility.Visible;
+        Body.IsHitTestVisible = false; // the content is a preview here: no pasting, menus or hover buttons
+        UpdateSizeLabel();
+
+        // next to the settings window, where there is room
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (near != IntPtr.Zero && Native.GetWindowRect(near, out var sr))
+        {
+            var mon = Native.MonitorFromWindow(near, Native.MONITOR_DEFAULTTONEAREST);
+            var mi = new Native.MONITORINFO { cbSize = Marshal.SizeOf<Native.MONITORINFO>() };
+            Native.GetMonitorInfo(mon, ref mi);
+            var work = mi.rcWork;
+            // onto the settings window's monitor first: its DPI and work area decide the size, not the caret's
+            Native.SetWindowPos(hwnd, IntPtr.Zero, work.Left, work.Top, 0, 0, Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+            ApplySize(mon, App.Settings.PopupWidth, App.Settings.PopupHeight);
+            UpdateSizeLabel();
+            Native.GetWindowRect(hwnd, out var pr);
+            int w = pr.Right - pr.Left, h = pr.Bottom - pr.Top, gap = 16;
+            int x = sr.Right + gap + w <= work.Right ? sr.Right + gap
+                  : sr.Left - gap - w >= work.Left ? sr.Left - gap - w
+                  : work.Left + (work.Right - work.Left - w) / 2;
+            int y = Math.Clamp(sr.Top, work.Top, Math.Max(work.Top, work.Bottom - h));
+            Native.SetWindowPos(hwnd, IntPtr.Zero, x, y, 0, 0, Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+        }
+    }
+
+    public void EndSizing(bool keep)
+    {
+        if (!_sizing) return;
+        if (keep)
+        {
+            App.Settings.PopupWidth = (int)Math.Round(Math.Max(MinWidth100, ActualWidth / _appliedScale));
+            App.Settings.PopupHeight = (int)Math.Round(Math.Max(MinHeight100, ActualHeight / _appliedScale));
+            App.Settings.Save();
+        }
+        _sizing = false;
+        SizingOverlay.Visibility = Visibility.Collapsed;
+        Body.IsHitTestVisible = true;
+        HidePopup();
+        SizingEnded?.Invoke(keep);
+    }
+
+    private void Resize(double dw, double dh)
+    {
+        double s = _appliedScale;
+        Width = Math.Clamp(Width + dw, MinWidth100 * s, Math.Max(MinWidth100 * s, _maxW));
+        Height = Math.Clamp(Height + dh, MinHeight100 * s, Math.Max(MinHeight100 * s, _maxH));
+        UpdateSizeLabel();
+    }
+
+    private void ResizeRight_DragDelta(object sender, DragDeltaEventArgs e) => Resize(e.HorizontalChange, 0);
+    private void ResizeBottom_DragDelta(object sender, DragDeltaEventArgs e) => Resize(0, e.VerticalChange);
+    private void ResizeCorner_DragDelta(object sender, DragDeltaEventArgs e) => Resize(e.HorizontalChange, e.VerticalChange);
+
+    private void UpdateSizeLabel()
+    {
+        SizeLabel.Text = $"{Math.Round(Width / _appliedScale)} × {Math.Round(Height / _appliedScale)}"
+                         + (Math.Abs(_appliedScale - 1) > 0.001 ? $"  ·  масштаб {Math.Round(_appliedScale * 100)}%" : "");
+    }
+
+    /// <summary>Settings changed the scale while sizing: show it right away, keeping what was dragged so far.</summary>
+    public void RefreshSize()
+    {
+        if (!IsVisible) return;
+        var mon = Native.MonitorFromWindow(new WindowInteropHelper(this).Handle, Native.MONITOR_DEFAULTTONEAREST);
+        ApplySize(mon, Width / _appliedScale, Height / _appliedScale);
+        UpdateSizeLabel();
+    }
+
     /// <summary>Places the window under the text caret if the app exposes it, otherwise near the mouse.
     /// Works in physical pixels so mixed-DPI setups land correctly.</summary>
     private void PositionNearCaret()
@@ -325,8 +482,9 @@ public partial class MainWindow : Window
         double scale = 1;
         if (Native.GetDpiForMonitor(mon, 0, out var dpiX, out _) == 0) scale = dpiX / 96.0;
 
-        int w = (int)(Width * scale), h = (int)(Height * scale), gap = (int)(6 * scale);
         var work = mi.rcWork;
+        ApplySize(scale, work, App.Settings.PopupWidth, App.Settings.PopupHeight);
+        int w = (int)Math.Round(Width * scale), h = (int)Math.Round(Height * scale), gap = (int)(6 * scale);
 
         int x = anchor.X;
         int y = anchor.Y + gap;
@@ -334,6 +492,8 @@ public partial class MainWindow : Window
         x = Math.Clamp(x, work.Left + gap, Math.Max(work.Left + gap, work.Right - w - gap));
         y = Math.Clamp(y, work.Top + gap, Math.Max(work.Top + gap, work.Bottom - h - gap));
 
+        // only the position: WPF keeps the size (set in device-independent pixels above) right when the move
+        // lands on a monitor with another DPI
         Native.SetWindowPos(hwnd, IntPtr.Zero, x, y, 0, 0, Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
     }
 
@@ -389,8 +549,30 @@ public partial class MainWindow : Window
         for (int i = 0; i < _items.Count; i++) _items[i].Index = i;
     }
 
-    private void UpdateCount() =>
+    private void UpdateCount()
+    {
         CountText.Text = Ru.Plural(App.Storage.Count(), "запись", "записи", "записей");
+        FitFooter();
+    }
+
+    private double _tabHintWidth;
+
+    /// <summary>On a narrow popup (or with a huge history) «Tab фильтр» makes way for the item count, so the two
+    /// never run into each other; the count itself is only trimmed if even that isn't enough.</summary>
+    internal void FitFooter()
+    {
+        if (Footer.ActualWidth <= 0) return;
+        bool shown = TabHint.Visibility == Visibility.Visible;
+        if (shown) _tabHintWidth = TabKey.DesiredSize.Width + TabHint.DesiredSize.Width;
+        double others = FooterHints.DesiredSize.Width - (shown ? _tabHintWidth : 0);
+        var text = new FormattedText(CountText.Text, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+            new Typeface(CountText.FontFamily, CountText.FontStyle, CountText.FontWeight, CountText.FontStretch), CountText.FontSize,
+            Brushes.Black, null, TextOptions.GetTextFormattingMode(this), VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        bool show = text.WidthIncludingTrailingWhitespace + CountText.Margin.Right + others + _tabHintWidth <= Footer.ActualWidth;
+        if (show != shown) TabKey.Visibility = TabHint.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void Footer_SizeChanged(object sender, SizeChangedEventArgs e) => FitFooter();
 
     private void UpdateEmptyState()
     {
@@ -702,6 +884,12 @@ public partial class MainWindow : Window
 
     private bool HandleKey(Key key, bool ctrl, bool shift)
     {
+        if (_sizing)
+        {
+            if (key == Key.Enter) EndSizing(true);
+            else if (key == Key.Escape) EndSizing(false);
+            return true; // nothing else while sizing
+        }
         // typed and pressed Enter (or an arrow) before the 90 ms search debounce ran: act on the results
         // of what is in the box now, not on the list from before
         if (key != Key.Escape && _searchTimer.IsEnabled)

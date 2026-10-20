@@ -135,6 +135,13 @@ public partial class App : Application
             return;
         }
 
+        var lc = Array.IndexOf(e.Args, "--layoutcheck");
+        if (lc >= 0 && lc + 1 < e.Args.Length)
+        {
+            Snapshots.LayoutCheck(_popup, e.Args[lc + 1]);
+            return;
+        }
+
         var snap = Array.IndexOf(e.Args, "--snapshot");
         if (snap >= 0 && snap + 1 < e.Args.Length)
         {
@@ -215,6 +222,8 @@ public partial class App : Application
     }
 
     public void ShowPopup() => _popup.ShowPopup();
+
+    public MainWindow Popup => _popup;
 
     public void OpenSettings()
     {

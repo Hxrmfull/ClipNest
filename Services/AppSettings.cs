@@ -15,6 +15,12 @@ public sealed class AppSettings
     /// <summary>A pasted item jumps to the top of the history.</summary>
     public bool MoveUsedToTop { get; set; } = true;
     public ThemeMode Theme { get; set; } = ThemeMode.System;
+    /// <summary>Scale of the history popup's content, in percent (fonts, cards, images alike). Set in settings; the popup
+    /// is resized by dragging only in sizing mode (Settings → «Изменить размер мышью»), so it never changes by accident.</summary>
+    public int PopupScale { get; set; } = 100;
+    /// <summary>Popup size at 100%, in device-independent pixels; set by dragging in sizing mode.</summary>
+    public int PopupWidth { get; set; } = 420;
+    public int PopupHeight { get; set; } = 600;
 
     /// <summary>0 = unlimited.</summary>
     public int MaxItems { get; set; } = 0;

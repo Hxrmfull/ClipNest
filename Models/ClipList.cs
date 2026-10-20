@@ -18,4 +18,9 @@ public sealed class ClipList : ObservableCollection<ClipItem>
         OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
+
+    /// <summary>Has the list box lay every card out afresh, as after a reload. Needed when the list gets narrower
+    /// while shown: its virtualizing panel keeps the widest size it has ever had (it only forgets that on a change
+    /// of the items), so the cards would stay as wide and lose their right side.</summary>
+    public void Relayout() => OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
 }

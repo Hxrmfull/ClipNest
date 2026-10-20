@@ -43,6 +43,8 @@ internal static class Native
     [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
     public const uint GA_ROOT = 2;
     [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
 
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);

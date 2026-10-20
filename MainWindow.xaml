@@ -241,6 +241,7 @@
         </DataTemplate>
     </Window.Resources>
 
+    <Grid x:Name="Root">
     <Border x:Name="Shell" Background="{DynamicResource SurfaceBg}" MouseLeftButtonDown="Shell_MouseLeftButtonDown">
         <Grid x:Name="Body">
             <Grid.RenderTransform>
@@ -293,7 +294,7 @@
                             ToolTip="Запись приостановлена — включите в меню значка в трее">
                         <TextBlock Text="пауза" FontSize="11" Foreground="{DynamicResource Danger}"/>
                     </Border>
-                    <Button Grid.Column="4" Style="{StaticResource IconButton}" Content="&#xE713;"
+                    <Button x:Name="SettingsButton" Grid.Column="4" Style="{StaticResource IconButton}" Content="&#xE713;"
                             Click="Settings_Click" ToolTip="Настройки"/>
                 </Grid>
             </Border>
@@ -337,9 +338,15 @@
 
             <!-- footer -->
             <Border Grid.Row="4" BorderBrush="{DynamicResource Stroke}" BorderThickness="0,1,0,0" Padding="14,8,12,9">
-                <Grid>
-                    <TextBlock x:Name="CountText" FontSize="11" Foreground="{DynamicResource TextTertiary}" VerticalAlignment="Center"/>
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <!-- on a narrow popup «Tab фильтр» makes way for the item count (FitFooter) -->
+                <Grid x:Name="Footer" SizeChanged="Footer_SizeChanged">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="CountText" FontSize="11" Foreground="{DynamicResource TextTertiary}" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" Margin="0,0,10,0"/>
+                    <StackPanel x:Name="FooterHints" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                         <StackPanel.Resources>
                             <Style TargetType="TextBlock">
                                 <Setter Property="FontSize" Value="11"/>
@@ -350,12 +357,44 @@
                         <Border Style="{StaticResource KeyCap}"><TextBlock Text="Enter" FontSize="10" Foreground="{DynamicResource TextSecondary}"/></Border>
                         <TextBlock Text="вставить" Margin="5,0,12,0"/>
                         <Border Style="{StaticResource KeyCap}"><TextBlock Text="Shift+Enter" FontSize="10" Foreground="{DynamicResource TextSecondary}"/></Border>
-                        <TextBlock Text="как текст" Margin="5,0,12,0"/>
-                        <Border Style="{StaticResource KeyCap}"><TextBlock Text="Tab" FontSize="10" Foreground="{DynamicResource TextSecondary}"/></Border>
-                        <TextBlock Text="фильтр" Margin="5,0,0,0"/>
+                        <TextBlock Text="как текст" Margin="5,0,0,0"/>
+                        <Border x:Name="TabKey" Style="{StaticResource KeyCap}" Margin="12,0,0,0"><TextBlock Text="Tab" FontSize="10" Foreground="{DynamicResource TextSecondary}"/></Border>
+                        <TextBlock x:Name="TabHint" Text="фильтр" Margin="5,0,0,0"/>
                     </StackPanel>
                 </Grid>
             </Border>
         </Grid>
     </Border>
+
+    <!-- sizing mode (Settings → «Изменить размер мышью»): outside the scaled shell, so the handles keep their size -->
+    <Grid x:Name="SizingOverlay" Visibility="Collapsed">
+        <Grid.Resources>
+            <Style TargetType="Thumb">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Thumb">
+                            <Border Background="Transparent"/>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </Grid.Resources>
+        <Border BorderBrush="{DynamicResource Accent}" BorderThickness="2" IsHitTestVisible="False"/>
+        <!-- one compact strip over the search row: the cards and the footer stay in view while sizing -->
+        <Border x:Name="SizingBanner" Background="{DynamicResource Accent}" CornerRadius="8" Padding="10,5,10,6" Margin="12,6,12,0" MinHeight="54"
+                VerticalAlignment="Top" IsHitTestVisible="False">
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock x:Name="SizeLabel" Foreground="White" FontSize="12" FontWeight="SemiBold" TextAlignment="Center"/>
+                <TextBlock Text="Тяните за край или уголок, двигайте за любое место · Enter&#160;—&#160;готово · Esc&#160;—&#160;отмена"
+                           Foreground="White" Opacity="0.85" FontSize="11" TextAlignment="Center" TextWrapping="Wrap" Margin="0,1,0,0"/>
+            </StackPanel>
+        </Border>
+        <Thumb Width="10" HorizontalAlignment="Right" Cursor="SizeWE" DragDelta="ResizeRight_DragDelta"/>
+        <Thumb Height="10" VerticalAlignment="Bottom" Cursor="SizeNS" DragDelta="ResizeBottom_DragDelta"/>
+        <Thumb Width="22" Height="22" HorizontalAlignment="Right" VerticalAlignment="Bottom" Cursor="SizeNWSE"
+               DragDelta="ResizeCorner_DragDelta"/>
+        <Path Data="M16,6 L6,16 M16,11 L11,16" Stroke="{DynamicResource Accent}" StrokeThickness="2" StrokeStartLineCap="Round"
+              StrokeEndLineCap="Round" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,3,3" IsHitTestVisible="False"/>
+    </Grid>
+    </Grid>
 </Window>
