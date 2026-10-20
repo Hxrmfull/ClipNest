@@ -32,6 +32,7 @@ public sealed class KeyboardHook : IDisposable
     private long _posted;      // hook thread: keys handed to the UI
     private long _acked;       // UI thread (Interlocked): keys the UI has taken
     private long _queueSince;  // hook thread: when the oldest key not yet taken was handed over
+    private bool _stalled;     // hook thread: the UI fell behind; keys pass through until it catches up
     private const int StuckMs = 1500;
 
     public event Action? WinVPressed;
@@ -113,16 +114,22 @@ public sealed class KeyboardHook : IDisposable
 
                 if (down && _capture)
                 {
-                    // safety: if the UI thread stops taking keys, the popup would swallow typing system-wide
+                    // safety: if the UI thread stops taking keys, the popup would swallow typing system-wide.
+                    // Keys then pass through until the UI has caught up, and capturing resumes by itself
+                    // (switching it off for good left the popup open with typing going to the app behind it).
                     long now = Environment.TickCount64;
-                    if (Interlocked.Read(ref _acked) == _posted) _queueSince = now;
-                    else if (now - _queueSince > StuckMs)
+                    if (Interlocked.Read(ref _acked) == _posted)
                     {
-                        _capture = false;
-                        _dispatcher.BeginInvoke(() => Log.Write("popup didn't take keys for 1.5 s; keyboard capture released"));
+                        _queueSince = now;
+                        _stalled = false;
+                    }
+                    else if (!_stalled && now - _queueSince > StuckMs)
+                    {
+                        _stalled = true;
+                        _dispatcher.BeginInvoke(() => Log.Write("popup didn't take keys for 1.5 s; passing keys through until it catches up"));
                     }
                 }
-                if (down && _capture && TryCapture(k, out var key))
+                if (down && _capture && !_stalled && TryCapture(k, out var key))
                 {
                     _swallowedDown.Add(k.vkCode);
                     _posted++;
@@ -162,7 +169,7 @@ public sealed class KeyboardHook : IDisposable
         if (ctrl && !altGr)
         {
             // the popup's own shortcuts; everything else with Ctrl goes to the app as usual
-            bool mine = vk is 'P' or 'H' or 'C' or (>= '1' and <= '9') or (>= Native.VK_NUMPAD1 and <= Native.VK_NUMPAD9);
+            bool mine = vk is 'P' or 'H' or 'C' or 'V' or (>= '1' and <= '9') or (>= Native.VK_NUMPAD1 and <= Native.VK_NUMPAD9);
             if (mine) key = new PopupKey(vk, '\0', true, shift);
             return mine;
         }

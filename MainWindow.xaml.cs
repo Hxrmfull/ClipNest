@@ -30,7 +30,6 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _searchTimer;
     private ClipFilter _filter = ClipFilter.All;
     private bool _hasMore;
-    private bool _menuOpen;
     private long _shownAt;
     private IntPtr _prevForeground;
     /// <summary>Shown like the built-in clipboard: without taking the focus. The app keeps its caret,
@@ -59,10 +58,13 @@ public partial class MainWindow : Window
         SearchBox.PreviewMouseLeftButtonDown += (_, e) =>
         {
             // a click in the search field switches to normal editing (caret, selection, Ctrl+A…)
-            if (_passive && FindAncestor<ButtonBase>(e.OriginalSource as DependencyObject) is null) EnterActiveMode();
+            if (FindAncestor<ButtonBase>(e.OriginalSource as DependencyObject) is not null) return;
+            if (_passive) EnterActiveMode();
+            // already in normal mode but the keyboard went missing (the beeping state): take it back on click
+            else if (Native.GetFocus() != new WindowInteropHelper(this).Handle) { ForceForeground(); TakeKeyboardFocus(); }
         };
 
-        Deactivated += (_, _) => { if (!_menuOpen && !KeepOpen) OnFocusLost(IntPtr.Zero); };
+        Deactivated += (_, _) => { if (!ItemMenu.IsOpen && !KeepOpen) OnFocusLost(IntPtr.Zero); };
         // Deactivated never comes if Windows didn't really give us the foreground (or took it back quietly):
         // then a click on the desktop or the Start menu left the popup open until it was clicked again.
         // So also close on any click outside and on any other app taking the foreground.
@@ -154,6 +156,8 @@ public partial class MainWindow : Window
     {
         if (!IsVisible) return;
         App.Hook.CapturePopupKeys = false;
+        _searchTimer.Stop();
+        if (ItemMenu.IsOpen) ItemMenu.IsOpen = false;
         ShowFakeCaret(false);
         WatchOutside(false);
         Hide();
@@ -668,21 +672,26 @@ public partial class MainWindow : Window
     private void OnPopupKey(PopupKey k)
     {
         if (!IsVisible || !_passive) return;
-        if (_menuOpen)
+        if (ItemMenu.IsOpen)
         {
             if (k.Vk == Native.VK_ESCAPE) ItemMenu.IsOpen = false;
             return;
         }
         if (k.Char != '\0')
         {
-            Search.Text += k.Char;
+            SetSearchText(Search.Text + k.Char);
+            return;
+        }
+        if (k.Ctrl && k.Vk == 'V')
+        {
+            PasteIntoSearch();
             return;
         }
         var key = KeyInterop.KeyFromVirtualKey(k.Vk);
         switch (key)
         {
             case Key.Back:
-                if (Search.Text.Length > 0) Search.Text = k.Ctrl ? "" : Search.Text[..^1];
+                if (Search.Text.Length > 0) SetSearchText(k.Ctrl ? "" : Search.Text[..^1]);
                 return;
             case Key.Home: Select(0); return;
             case Key.End: Select(_items.Count - 1); return;
@@ -693,6 +702,13 @@ public partial class MainWindow : Window
 
     private bool HandleKey(Key key, bool ctrl, bool shift)
     {
+        // typed and pressed Enter (or an arrow) before the 90 ms search debounce ran: act on the results
+        // of what is in the box now, not on the list from before
+        if (key != Key.Escape && _searchTimer.IsEnabled)
+        {
+            _searchTimer.Stop();
+            Reload();
+        }
         switch (key)
         {
             case Key.Escape:
@@ -743,13 +759,60 @@ public partial class MainWindow : Window
     /// <summary>Leaves the focus-less mode: the popup takes the focus so the search field can be edited normally.</summary>
     private void EnterActiveMode()
     {
+        ForceForeground();
+        if (Native.GetForegroundWindow() != new WindowInteropHelper(this).Handle)
+        {
+            // Windows refused (it does, e.g., while an elevated app is in front). Going on without the focus and
+            // without the hook left typing going nowhere; instead keep (or start) taking keys through the hook.
+            // The next click into the search box tries again.
+            Log.Write("search: Windows didn't hand the popup the focus; typing goes through the keyboard hook");
+            _passive = true;
+            if (!KeepOpen) App.Hook.CapturePopupKeys = true; // never take the keyboard in dev/profile runs
+            ShowFakeCaret(true);
+            return;
+        }
         _passive = false;
         App.Hook.CapturePopupKeys = false;
         ShowFakeCaret(false);
-        ForceForeground();
         Activate();
-        Keyboard.Focus(Search);
+        TakeKeyboardFocus();
         Search.CaretIndex = Search.Text.Length;
+    }
+
+    /// <summary>Gives the search box the real (Win32) keyboard focus. A no-activate window that was brought to the
+    /// front can end up active with no focus at all: then every key arrives as Alt+key, Windows beeps at each one,
+    /// nothing is typed, and WPF, still believing the box is focused, ignores further clicks.</summary>
+    private void TakeKeyboardFocus()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (Native.GetFocus() != hwnd)
+        {
+            Native.SetFocus(hwnd);
+            // WPF skips focusing an element it thinks already has the focus: make it start over
+            if (Keyboard.FocusedElement == Search) Keyboard.ClearFocus();
+        }
+        Keyboard.Focus(Search);
+        if (Native.GetFocus() != hwnd) Log.Write("search: the popup is active but Windows didn't give it the keyboard focus");
+    }
+
+    /// <summary>Search edits that arrive through the hook: the caret goes to the end (so Del, scrolling and
+    /// the drawn caret agree with what was typed).</summary>
+    private void SetSearchText(string text)
+    {
+        Search.Text = text;
+        Search.CaretIndex = text.Length;
+    }
+
+    /// <summary>Ctrl+V while the popup has no focus: the clipboard text becomes (part of) the search
+    /// instead of being pasted into the app behind the popup.</summary>
+    private void PasteIntoSearch()
+    {
+        string text;
+        try { text = Clipboard.ContainsText() ? Clipboard.GetText() : ""; }
+        catch { return; }
+        var line = text.Replace("\r", "").Split('\n').FirstOrDefault(l => l.Trim().Length > 0)?.Trim() ?? "";
+        if (line.Length > 200) line = line[..200];
+        if (line.Length > 0) SetSearchText(Search.Text + line);
     }
 
     /// <summary>Without focus the search box draws no caret, so a blinking one is drawn after the text.</summary>
@@ -768,8 +831,12 @@ public partial class MainWindow : Window
         if (FakeCaret.Visibility != Visibility.Visible) return;
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
+            // an unfocused text box doesn't scroll to follow its caret: keep the end of a long query in view
+            Search.ScrollToHorizontalOffset(double.MaxValue);
+            Search.UpdateLayout();
             var r = Search.GetRectFromCharacterIndex(Search.Text.Length);
-            double x = r.IsEmpty || double.IsInfinity(r.X) ? 2 : r.X;
+            double x = r.IsEmpty || double.IsInfinity(r.X) || double.IsNaN(r.X) ? 2 : r.X;
+            x = Math.Clamp(x, 0, Math.Max(0, Search.ActualWidth - FakeCaret.Width));
             FakeCaret.Margin = new Thickness(x, 0, 0, 0);
             FakeCaret.Opacity = 1;
             if (_caretBlink.IsEnabled) { _caretBlink.Stop(); _caretBlink.Start(); }
@@ -909,12 +976,10 @@ public partial class MainWindow : Window
         }
         List.SelectedItem = item;
         BuildMenu(item);
-        _menuOpen = true;
     }
 
     private void ItemMenu_Closed(object sender, RoutedEventArgs e)
     {
-        _menuOpen = false;
         if (_passive) return; // never had the focus: nothing to restore, and inactive is normal here
         if (IsVisible && !IsActive) HidePopup();
         else Keyboard.Focus(Search);

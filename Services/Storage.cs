@@ -72,6 +72,10 @@ public sealed class Storage : IDisposable
             """);
         if (!TableHasColumn("items", "regions")) Exec("ALTER TABLE items ADD COLUMN regions TEXT");
         EnsureSearchIndex();
+        if (UserVersion() < 3)
+        {
+            Exec("UPDATE items SET search = replace(search, 'ё', 'е') WHERE instr(search, 'ё') > 0; PRAGMA user_version = 3;");
+        }
         EncryptPlainImages();
     }
 
@@ -269,6 +273,13 @@ public sealed class Storage : IDisposable
         Log.Write("migrated history.db to v2");
     }
 
+    private long UserVersion()
+    {
+        using var cmd = _db.CreateCommand();
+        cmd.CommandText = "PRAGMA user_version";
+        return (long)cmd.ExecuteScalar()!;
+    }
+
     private bool TableHasColumn(string table, string name)
     {
         using var cmd = _db.CreateCommand();
@@ -291,15 +302,21 @@ public sealed class Storage : IDisposable
     private static string SearchKey(ClipItem i)
     {
         // secrets are findable only by source and kind, never by content
-        if (i.Secret) return $"{i.Source}\nсекрет скрыто пароль secret".ToLowerInvariant();
+        if (i.Secret) return Normalize($"{i.Source}\nсекрет скрыто пароль secret");
 
         var sb = new StringBuilder();
         // huge texts are stored whole, but only their beginning is searchable
         var text = i.Text is { Length: > SearchChars } t ? t[..SearchChars] : i.Text;
         sb.Append(text).Append('\n').Append(i.Files).Append('\n').Append(i.Source);
         if (i.Kind == ClipKind.Image) sb.Append("\nизображение картинка image\n").Append(i.OcrText); // text read off the picture
-        return sb.ToString().ToLowerInvariant();
+        return Normalize(sb.ToString());
     }
+
+    /// <summary>Search keys and queries alike: lower case, and «ё» as «е» (people type «елка» for «ёлка»).</summary>
+    private static string Normalize(string s) => s.ToLowerInvariant().Replace('ё', 'е');
+
+    /// <summary>Length in characters as the trigram index counts them: "😀" is one, though two UTF-16 units.</summary>
+    private static int Chars(string s) => s.EnumerateRunes().Count();
 
     private static string? PreviewOf(ClipItem i)
     {
@@ -408,9 +425,9 @@ public sealed class Storage : IDisposable
             case ClipFilter.Files: where.Add("kind=3"); break;
             case ClipFilter.Pinned: where.Add("pinned=1"); break;
         }
-        var terms = (search ?? "").ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var terms = Normalize(search ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries); // any whitespace
         // 3+ characters go through the trigram index; shorter ones can't, and are cheap to scan for anyway
-        var indexed = terms.Where(t => t.Length >= 3).Select(t => "\"" + t.Replace("\"", "\"\"") + "\"").ToList();
+        var indexed = terms.Where(t => Chars(t) >= 3).Select(t => "\"" + t.Replace("\"", "\"\"") + "\"").ToList();
         var ftsQuery = string.Join(" AND ", indexed);
         // the index wins for rare words; for common ones a plain scan in display order reaches the first page sooner
         bool useIndex = indexed.Count > 0 && CountMatches(ftsQuery, FtsCommonThreshold + 1) <= FtsCommonThreshold;
@@ -419,7 +436,7 @@ public sealed class Storage : IDisposable
             where.Add("id IN (SELECT rowid FROM search_fts WHERE search_fts MATCH $fts)");
             cmd.Parameters.AddWithValue("$fts", ftsQuery);
         }
-        var shortTerms = useIndex ? terms.Where(t => t.Length < 3).ToList() : terms.ToList();
+        var shortTerms = useIndex ? terms.Where(t => Chars(t) < 3).ToList() : terms.ToList();
         for (int i = 0; i < shortTerms.Count; i++)
         {
             where.Add($"instr(search, $q{i}) > 0");
@@ -428,7 +445,7 @@ public sealed class Storage : IDisposable
         // only 1–2 characters: the index can't help, and scanning every (encrypted) page for a rare pair took ~150 ms
         // on 20 000 items. Such a short query looks through the most recent items; from 3 characters, everything.
         // A time boundary rather than an id list: a common pair still stops at the first page of matches.
-        if (terms.Length > 0 && terms.All(t => t.Length < 3) && ShortQueryCutoff() is long cut)
+        if (terms.Length > 0 && terms.All(t => Chars(t) < 3) && ShortQueryCutoff() is long cut)
         {
             where.Add("(pinned = 1 OR stamp >= $cut)");
             cmd.Parameters.AddWithValue("$cut", cut);
