@@ -91,6 +91,7 @@ public partial class MainWindow : Window
         // no activation on click either: like the built-in panel, the app being typed in keeps its focus
         Native.SetWindowLongPtr(hwnd, Native.GWL_EXSTYLE,
             new IntPtr((ex | Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE) & ~Native.WS_EX_APPWINDOW));
+        DropCaptionButtons(hwnd);
         int round = DWMWCP_ROUND;
         Native.DwmSetWindowAttribute(hwnd, Native.DWMWA_WINDOW_CORNER_PREFERENCE, ref round, sizeof(int));
         int off = 1;
@@ -466,14 +467,20 @@ public partial class MainWindow : Window
         }
         chrome.ResizeBorderThickness = new Thickness(on ? ResizeBand : 0);
         ResizeMode = on ? ResizeMode.CanResize : ResizeMode.NoResize;
-        if (on)
-        {
-            // no maximize box: no Snap layouts, and a double click on the top edge doesn't stretch it to the screen height
-            var hwnd = new WindowInteropHelper(this).Handle;
-            var style = (long)Native.GetWindowLongPtr(hwnd, Native.GWL_STYLE);
-            Native.SetWindowLongPtr(hwnd, Native.GWL_STYLE, new IntPtr(style & ~Native.WS_MAXIMIZEBOX));
-        }
+        // WPF puts the system menu and the maximize box back for a new ResizeMode: without the maximize box there are
+        // no Snap layouts, and a double click on the top edge doesn't stretch the window to the screen height
+        DropCaptionButtons(new WindowInteropHelper(this).Handle);
         UpdateSizeLimits();
+    }
+
+    /// <summary>No system menu, so no caption buttons at all. With one, Windows now and then repainted the frame the
+    /// classic way and its old-style close button (a red square with a white cross) flashed in the popup's top-right
+    /// corner as it opened.</summary>
+    private static void DropCaptionButtons(IntPtr hwnd)
+    {
+        var style = (long)Native.GetWindowLongPtr(hwnd, Native.GWL_STYLE);
+        var bare = style & ~(Native.WS_SYSMENU | Native.WS_MINIMIZEBOX | Native.WS_MAXIMIZEBOX);
+        if (bare != style) Native.SetWindowLongPtr(hwnd, Native.GWL_STYLE, new IntPtr(bare));
     }
 
     /// <summary>While sizing: the same minimum (at the current scale) and 90%-of-the-monitor maximum as everywhere else.</summary>
