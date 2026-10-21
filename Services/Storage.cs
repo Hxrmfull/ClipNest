@@ -677,6 +677,23 @@ public sealed class Storage : IDisposable
         return removed;
     }
 
+    /// <summary>When the oldest unpinned item was last used (copied or pasted); null if there is none.</summary>
+    public DateTime? OldestUnpinned()
+    {
+        using var cmd = _db.CreateCommand();
+        cmd.CommandText = "SELECT MIN(stamp) FROM items WHERE pinned=0";
+        return cmd.ExecuteScalar() is long ms ? FromUnix(ms) : null;
+    }
+
+    /// <summary>How long to wait before the next <see cref="Prune"/>: until the oldest item gets older than
+    /// <paramref name="maxAgeDays"/>, at least 5 s and at most an hour (a changed clock or a sleep can't stretch it;
+    /// an hour too when there is nothing to expire yet).</summary>
+    public static TimeSpan NextPruneIn(DateTime? oldest, int maxAgeDays, DateTime now)
+    {
+        var due = oldest is { } t ? t.AddDays(maxAgeDays) - now + TimeSpan.FromSeconds(1) : TimeSpan.FromHours(1);
+        return due < TimeSpan.FromSeconds(5) ? TimeSpan.FromSeconds(5) : due > TimeSpan.FromHours(1) ? TimeSpan.FromHours(1) : due;
+    }
+
     private int DeleteWhere(string where, params (string name, object value)[] args)
     {
         var images = new List<string>();

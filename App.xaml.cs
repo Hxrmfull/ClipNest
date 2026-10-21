@@ -26,6 +26,7 @@ public partial class App : Application
     private Forms.NotifyIcon? _tray;
     private Forms.ToolStripMenuItem? _openItem, _pauseItem, _settingsItem, _exitItem;
     private SettingsWindow? _settingsWindow;
+    private System.Windows.Threading.DispatcherTimer? _pruneTimer;
 
     public static AppSettings Settings { get; private set; } = null!;
     public static Storage Storage { get; private set; } = null!;
@@ -99,6 +100,7 @@ public partial class App : Application
         _popup = new MainWindow();
         _popup.Warmup();
         Monitor.ItemCaptured += _popup.OnItemCaptured;
+        SchedulePrune();
 
         Autostart.Set(Settings.Autostart);
         CreateTray();
@@ -110,6 +112,11 @@ public partial class App : Application
             if (ev.Reason is Microsoft.Win32.SessionSwitchReason.SessionLock or Microsoft.Win32.SessionSwitchReason.ConsoleDisconnect
                 or Microsoft.Win32.SessionSwitchReason.RemoteDisconnect)
                 Dispatcher.BeginInvoke(_popup.HidePopup);
+        };
+        // after a sleep the timer may be late: what expired meanwhile goes at once
+        Microsoft.Win32.SystemEvents.PowerModeChanged += (_, ev) =>
+        {
+            if (ev.Mode == Microsoft.Win32.PowerModes.Resume) Dispatcher.BeginInvoke(PruneNow);
         };
         Microsoft.Win32.SystemEvents.UserPreferenceChanged += (_, _) =>
         {
@@ -254,6 +261,36 @@ public partial class App : Application
         _settingsWindow.Activate();
     }
 
+    /// <summary>Keeps «Сколько дней хранить» while ClipNest runs, not only at its start: the timer wakes when the oldest
+    /// item expires (<see cref="Storage.NextPruneIn"/>). Off when the history is kept forever, so then an idle ClipNest
+    /// never wakes up; a check that finds nothing to delete writes nothing to the disk either.</summary>
+    private void SchedulePrune()
+    {
+        if (_pruneTimer is null)
+        {
+            _pruneTimer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background, Dispatcher);
+            _pruneTimer.Tick += (_, _) => PruneNow();
+        }
+        _pruneTimer.Stop();
+        if (Settings.MaxAgeDays <= 0) return;
+        _pruneTimer.Interval = Storage.NextPruneIn(Storage.OldestUnpinned(), Settings.MaxAgeDays, DateTime.Now);
+        _pruneTimer.Start();
+    }
+
+    private void PruneNow()
+    {
+        if (_pruneTimer is null) return; // shutting down
+        // not under an open list: its cards would point at deleted items (it goes a few seconds later)
+        if (!_popup.IsVisible) Storage.Prune(Settings.MaxItems, Settings.MaxAgeDays);
+        SchedulePrune();
+    }
+
+    private void StopPruning()
+    {
+        _pruneTimer?.Stop();
+        _pruneTimer = null;
+    }
+
     /// <summary>Re-applies settings after the settings window saves them.</summary>
     public void ApplySettings()
     {
@@ -263,6 +300,7 @@ public partial class App : Application
         Theme.Apply(Settings.Theme);
         Loc.Apply(Settings.Language);
         Storage.Prune(Settings.MaxItems, Settings.MaxAgeDays);
+        SchedulePrune();
     }
 
     /// <summary>Switches to another data folder: closes the database, moves the data there
@@ -273,6 +311,7 @@ public partial class App : Application
         bool move = !DataLocation.HasHistory(newDir);
         Settings.Save();
         _popup.HidePopup();
+        StopPruning();
         Monitor.ItemCaptured -= _popup.OnItemCaptured;
         Hook.Dispose();
         Monitor.Dispose();
@@ -310,6 +349,7 @@ public partial class App : Application
 
     public void Quit()
     {
+        StopPruning();
         ClipNest.MainWindow.CleanViewCopies();
         if (_tray is not null) { _tray.Visible = false; _tray.Dispose(); }
         Hook?.Dispose();
