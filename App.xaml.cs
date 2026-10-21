@@ -24,7 +24,7 @@ public partial class App : Application
     private Mutex? _mutex;
     private EventWaitHandle? _showEvent;
     private Forms.NotifyIcon? _tray;
-    private Forms.ToolStripMenuItem? _pauseItem;
+    private Forms.ToolStripMenuItem? _openItem, _pauseItem, _settingsItem, _exitItem;
     private SettingsWindow? _settingsWindow;
 
     public static AppSettings Settings { get; private set; } = null!;
@@ -79,6 +79,13 @@ public partial class App : Application
         };
 
         Settings = AppSettings.Load(dataDir);
+        if (Settings.Language == UiLanguage.Unset)
+        {
+            // the first start (ClipNest has no installer): take the language Windows speaks, and keep it from now on
+            Settings.Language = Loc.FromWindows();
+            Settings.Save();
+        }
+        Loc.Apply(Settings.Language);
         Theme.Apply(Settings.Theme);
 
         Secrets.Init(dataDir);
@@ -153,8 +160,7 @@ public partial class App : Application
         {
             Settings.ShownWelcome = true;
             Settings.Save();
-            _tray!.ShowBalloonTip(5000, "ClipNest запущен",
-                Settings.ReplaceWinV ? "Нажмите Win+V, чтобы открыть историю буфера обмена." : "Откройте историю через значок в трее.",
+            _tray!.ShowBalloonTip(5000, Loc.T("WelcomeTitle"), Loc.T(Settings.ReplaceWinV ? "WelcomeWinV" : "WelcomeTray"),
                 Forms.ToolTipIcon.None);
         }
         else if (e.Args.Contains("--settings"))
@@ -193,17 +199,15 @@ public partial class App : Application
         using (var s = res.Stream) icon = new System.Drawing.Icon(s, Forms.SystemInformation.SmallIconSize);
 
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("Открыть историю", null, (_, _) => ShowPopup());
-        _pauseItem = new Forms.ToolStripMenuItem("Приостановить запись", null, (_, _) => TogglePause());
-        menu.Items.Add(_pauseItem);
-        menu.Items.Add("Настройки…", null, (_, _) => OpenSettings());
-        menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("Выход", null, (_, _) => Quit());
+        _openItem = new Forms.ToolStripMenuItem("", null, (_, _) => ShowPopup());
+        _pauseItem = new Forms.ToolStripMenuItem("", null, (_, _) => TogglePause());
+        _settingsItem = new Forms.ToolStripMenuItem("", null, (_, _) => OpenSettings());
+        _exitItem = new Forms.ToolStripMenuItem("", null, (_, _) => Quit());
+        menu.Items.AddRange(new Forms.ToolStripItem[] { _openItem, _pauseItem, _settingsItem, new Forms.ToolStripSeparator(), _exitItem });
 
         _tray = new Forms.NotifyIcon
         {
             Icon = icon,
-            Text = "ClipNest — история буфера обмена",
             ContextMenuStrip = menu,
             Visible = true,
         };
@@ -211,13 +215,25 @@ public partial class App : Application
         {
             if (ev.Button == Forms.MouseButtons.Left) ShowPopup();
         };
+        UpdateTrayTexts();
+        Loc.Changed += UpdateTrayTexts;
+    }
+
+    private void UpdateTrayTexts()
+    {
+        if (_tray is null) return;
+        _openItem!.Text = Loc.T("TrayOpen");
+        _pauseItem!.Text = Loc.T("TrayPause");
+        _settingsItem!.Text = Loc.T("TraySettings");
+        _exitItem!.Text = Loc.T("TrayExit");
+        _tray.Text = Loc.T(Monitor.Paused ? "TrayTipPaused" : "TrayTip");
     }
 
     public void TogglePause()
     {
         Monitor.Paused = !Monitor.Paused;
         if (_pauseItem is not null) _pauseItem.Checked = Monitor.Paused;
-        if (_tray is not null) _tray.Text = Monitor.Paused ? "ClipNest — запись приостановлена" : "ClipNest — история буфера обмена";
+        UpdateTrayTexts();
         _popup.UpdatePausedState();
     }
 
@@ -245,6 +261,7 @@ public partial class App : Application
         Hook.Enabled = Settings.ReplaceWinV;
         Autostart.Set(Settings.Autostart);
         Theme.Apply(Settings.Theme);
+        Loc.Apply(Settings.Language);
         Storage.Prune(Settings.MaxItems, Settings.MaxAgeDays);
     }
 
@@ -273,7 +290,7 @@ public partial class App : Application
         {
             Log.FilePath = log;
             Log.Write("relocate: " + ex);
-            MessageBox.Show($"Не удалось перенести данные в «{newDir}»:\n{ex.Message}\n\nИстория осталась в «{oldDir}».",
+            MessageBox.Show(Loc.F("MoveFailed", newDir, ex.Message, oldDir),
                 "ClipNest", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         Restart("--settings");

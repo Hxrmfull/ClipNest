@@ -13,6 +13,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Shell;
 using System.Windows.Threading;
 using ClipNest.Models;
 using ClipNest.Services;
@@ -73,6 +74,8 @@ public partial class MainWindow : Window
         _foregroundProc = (_, _, hwnd, _, _, _, _) => { if (!KeepOpen && !_sizing && hwnd != IntPtr.Zero) OnFocusLost(hwnd); };
         SourceInitialized += (_, _) => SetupNativeWindow();
         List.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(OnListScroll));
+        Language = Loc.Xml;
+        SizeChanged += (_, _) => { if (SizingOverlay.IsVisible) UpdateSizeLabel(); };
         // made narrower while shown (sizing mode): the cards must shrink with it, see ClipList.Relayout
         List.SizeChanged += (_, e) =>
         {
@@ -365,10 +368,24 @@ public partial class MainWindow : Window
             // pixel-snapped "Display" text only looks right unscaled; scaled text is rendered as "Ideal"
             TextOptions.SetTextFormattingMode(this, native ? TextFormattingMode.Display : TextFormattingMode.Ideal);
         }
+        UpdateSizeLimits(); // before the new size, or the old limits would cut it
         // Max/Min rather than Clamp: rounding can put the minimum a hair above the maximum
-        Width = Math.Max(MinWidth100 * s, Math.Min(Math.Max(MinWidth100, baseW) * s, _maxW));
-        Height = Math.Max(MinHeight100 * s, Math.Min(Math.Max(MinHeight100, baseH) * s, _maxH));
+        double w = Math.Max(MinWidth100 * s, Math.Min(Math.Max(MinWidth100, baseW) * s, _maxW));
+        double h = Math.Max(MinHeight100 * s, Math.Min(Math.Max(MinHeight100, baseH) * s, _maxH));
+        Width = w;
+        Height = h;
+        // Width reads back already rounded to whole pixels: the size at 100% comes from w and h
+        (_setW, _setH, _baseW, _baseH) = (Width, Height, w / s, h / s);
     }
+
+    private double _setW, _setH, _baseW, _baseH;
+
+    /// <summary>The popup's size at 100%: the one <see cref="ApplySize"/> set, unless the window was resized since.
+    /// Worked back from the window it would drift: at 90% a height of 665 becomes 598.5, the window 599 px,
+    /// and 599 / 0.9 = 666 on every confirmed preview.</summary>
+    internal (double W, double H) BaseSize() =>
+        (Math.Abs(ActualWidth - _setW) < 1 ? _baseW : ActualWidth / _appliedScale,
+         Math.Abs(ActualHeight - _setH) < 1 ? _baseH : ActualHeight / _appliedScale);
 
     private void ApplySize(IntPtr monitor, double baseW, double baseH)
     {
@@ -380,14 +397,15 @@ public partial class MainWindow : Window
 
     // ---------- sizing mode ----------
 
-    /// <summary>Shows the popup next to <paramref name="near"/> (the settings window) with drag handles on its
-    /// right and bottom edges. The size is kept on Enter / <see cref="EndSizing"/>(true), dropped on Esc.</summary>
+    /// <summary>Shows the popup next to <paramref name="near"/> (the settings window), resizable by any edge or corner.
+    /// The size is kept on Enter / <see cref="EndSizing"/>(true), dropped on Esc.</summary>
     public void BeginSizing(IntPtr near)
     {
         if (_sizing) { ForceForeground(); return; }
         if (IsVisible) HidePopup();
         _sizing = true;
         ShowPopup();
+        SetResizable(true);
         SizingOverlay.Visibility = Visibility.Visible;
         Body.IsHitTestVisible = false; // the content is a preview here: no pasting, menus or hover buttons
         UpdateSizeLabel();
@@ -419,33 +437,60 @@ public partial class MainWindow : Window
         if (!_sizing) return;
         if (keep)
         {
-            App.Settings.PopupWidth = (int)Math.Round(Math.Max(MinWidth100, ActualWidth / _appliedScale));
-            App.Settings.PopupHeight = (int)Math.Round(Math.Max(MinHeight100, ActualHeight / _appliedScale));
+            var (w, h) = BaseSize();
+            App.Settings.PopupWidth = (int)Math.Round(Math.Max(MinWidth100, w));
+            App.Settings.PopupHeight = (int)Math.Round(Math.Max(MinHeight100, h));
             App.Settings.Save();
         }
         _sizing = false;
+        SetResizable(false);
         SizingOverlay.Visibility = Visibility.Collapsed;
         Body.IsHitTestVisible = true;
         HidePopup();
         SizingEnded?.Invoke(keep);
     }
 
-    private void Resize(double dw, double dh)
+    /// <summary>Width of the band along each edge that resizes the window in sizing mode.</summary>
+    private const double ResizeBand = 10;
+
+    /// <summary>Sizing mode gives the window real resize borders on all four sides and corners: Windows shows the
+    /// cursors and runs the drag, WPF keeps it within <see cref="UpdateSizeLimits"/>. Otherwise the popup has none,
+    /// so its size never changes by accident.</summary>
+    private void SetResizable(bool on)
     {
-        double s = _appliedScale;
-        Width = Math.Clamp(Width + dw, MinWidth100 * s, Math.Max(MinWidth100 * s, _maxW));
-        Height = Math.Clamp(Height + dh, MinHeight100 * s, Math.Max(MinHeight100 * s, _maxH));
-        UpdateSizeLabel();
+        var chrome = WindowChrome.GetWindowChrome(this);
+        if (chrome.IsFrozen)
+        {
+            chrome = (WindowChrome)chrome.Clone();
+            WindowChrome.SetWindowChrome(this, chrome);
+        }
+        chrome.ResizeBorderThickness = new Thickness(on ? ResizeBand : 0);
+        ResizeMode = on ? ResizeMode.CanResize : ResizeMode.NoResize;
+        if (on)
+        {
+            // no maximize box: no Snap layouts, and a double click on the top edge doesn't stretch it to the screen height
+            var hwnd = new WindowInteropHelper(this).Handle;
+            var style = (long)Native.GetWindowLongPtr(hwnd, Native.GWL_STYLE);
+            Native.SetWindowLongPtr(hwnd, Native.GWL_STYLE, new IntPtr(style & ~Native.WS_MAXIMIZEBOX));
+        }
+        UpdateSizeLimits();
     }
 
-    private void ResizeRight_DragDelta(object sender, DragDeltaEventArgs e) => Resize(e.HorizontalChange, 0);
-    private void ResizeBottom_DragDelta(object sender, DragDeltaEventArgs e) => Resize(0, e.VerticalChange);
-    private void ResizeCorner_DragDelta(object sender, DragDeltaEventArgs e) => Resize(e.HorizontalChange, e.VerticalChange);
+    /// <summary>While sizing: the same minimum (at the current scale) and 90%-of-the-monitor maximum as everywhere else.</summary>
+    private void UpdateSizeLimits()
+    {
+        double s = _appliedScale;
+        MinWidth = _sizing ? MinWidth100 * s : 0;
+        MinHeight = _sizing ? MinHeight100 * s : 0;
+        MaxWidth = _sizing ? Math.Max(MinWidth, _maxW) : double.PositiveInfinity;
+        MaxHeight = _sizing ? Math.Max(MinHeight, _maxH) : double.PositiveInfinity;
+    }
 
     private void UpdateSizeLabel()
     {
-        SizeLabel.Text = $"{Math.Round(Width / _appliedScale)} × {Math.Round(Height / _appliedScale)}"
-                         + (Math.Abs(_appliedScale - 1) > 0.001 ? $"  ·  масштаб {Math.Round(_appliedScale * 100)}%" : "");
+        var (w, h) = BaseSize();
+        SizeLabel.Text = $"{Math.Round(w)} × {Math.Round(h)}"
+                         + (Math.Abs(_appliedScale - 1) > 0.001 ? "  ·  " + Loc.F("SizingScale", Math.Round(_appliedScale * 100)) : "");
     }
 
     /// <summary>Settings changed the scale while sizing: show it right away, keeping what was dragged so far.</summary>
@@ -453,7 +498,8 @@ public partial class MainWindow : Window
     {
         if (!IsVisible) return;
         var mon = Native.MonitorFromWindow(new WindowInteropHelper(this).Handle, Native.MONITOR_DEFAULTTONEAREST);
-        ApplySize(mon, Width / _appliedScale, Height / _appliedScale);
+        var (w, h) = BaseSize();
+        ApplySize(mon, w, h);
         UpdateSizeLabel();
     }
 
@@ -551,7 +597,7 @@ public partial class MainWindow : Window
 
     private void UpdateCount()
     {
-        CountText.Text = Ru.Plural(App.Storage.Count(), "запись", "записи", "записей");
+        CountText.Text = Loc.Count(App.Storage.Count(), "Items");
         FitFooter();
     }
 
@@ -582,20 +628,20 @@ public partial class MainWindow : Window
         if (!string.IsNullOrWhiteSpace(Search.Text))
         {
             EmptyGlyph.Text = "";
-            EmptyTitle.Text = "Ничего не найдено";
-            EmptyText.Text = "Попробуйте другой запрос или фильтр.";
+            EmptyTitle.Text = Loc.T("NotFoundTitle");
+            EmptyText.Text = Loc.T("NotFoundText");
         }
         else if (_filter == ClipFilter.Pinned)
         {
             EmptyGlyph.Text = "";
-            EmptyTitle.Text = "Нет закреплённых";
-            EmptyText.Text = "Закреплённые записи не удаляются при очистке. Ctrl+P — закрепить.";
+            EmptyTitle.Text = Loc.T("NoPinnedTitle");
+            EmptyText.Text = Loc.T("NoPinnedText");
         }
         else
         {
             EmptyGlyph.Text = "";
-            EmptyTitle.Text = "История пуста";
-            EmptyText.Text = "Скопируйте что-нибудь — оно появится здесь.";
+            EmptyTitle.Text = Loc.T("EmptyTitle");
+            EmptyText.Text = Loc.T("EmptyText");
         }
     }
 
@@ -1185,43 +1231,43 @@ public partial class MainWindow : Window
             return mi;
         }
 
-        Add("Вставить", "", () => Paste(item, false), "Enter");
+        Add(Loc.T("MenuPaste"), "", () => Paste(item, false), "Enter");
         if (item.HasRichFormat || item.IsFiles)
-            Add("Вставить как текст", "", () => Paste(item, true), "Shift+Enter");
-        Add("Копировать", "", () => CopyOnly(item), "Ctrl+C");
+            Add(Loc.T("MenuPastePlain"), "", () => Paste(item, true), "Shift+Enter");
+        Add(Loc.T("MenuCopy"), "", () => CopyOnly(item), "Ctrl+C");
         ItemMenu.Items.Add(new Separator());
-        Add(item.Pinned ? "Открепить" : "Закрепить", item.Pinned ? "" : "", () => TogglePin(item), "Ctrl+P");
+        Add(Loc.T(item.Pinned ? "MenuUnpin" : "MenuPin"), item.Pinned ? "" : "", () => TogglePin(item), "Ctrl+P");
         if (item.Secret)
         {
-            Add(item.Revealed ? "Скрыть" : "Показать", item.Revealed ? "" : "", () => ToggleReveal(item), "Ctrl+H");
-            Add("Это не секрет", "", () => MarkSecret(item, false));
+            Add(Loc.T(item.Revealed ? "MenuHide" : "MenuReveal"), item.Revealed ? "" : "", () => ToggleReveal(item), "Ctrl+H");
+            Add(Loc.T("MenuNotSecret"), "", () => MarkSecret(item, false));
         }
         else
         {
-            Add("Скрыть как секрет", "", () => MarkSecret(item, true), "Ctrl+H");
+            Add(Loc.T("MenuMarkSecret"), "", () => MarkSecret(item, true), "Ctrl+H");
         }
         switch (item.Kind)
         {
-            case ClipKind.Link: Add("Открыть в браузере", "", () => Open(item)); break;
+            case ClipKind.Link: Add(Loc.T("MenuOpenLink"), "", () => Open(item)); break;
             case ClipKind.Image when !item.Secret:
-                Add("Открыть изображение", "", () => Open(item));
-                if (ImageScanner.Available) Add("Проверить на секреты", "\uE721", () => RescanImage(item));
+                Add(Loc.T("MenuOpenImage"), "", () => Open(item));
+                if (ImageScanner.Available) Add(Loc.T("MenuRescan"), "\uE721", () => RescanImage(item));
                 break;
-            case ClipKind.Files: Add("Показать в проводнике", "", () => Open(item)); break;
+            case ClipKind.Files: Add(Loc.T("MenuShowFiles"), "", () => Open(item)); break;
         }
 
         if (item.IsTextual && !item.Secret)
         {
             ItemMenu.Items.Add(new Separator());
-            Add("Вставить ВЕРХНИМ РЕГИСТРОМ", "", () => PasteTransformed(item, t => t.ToUpperInvariant()));
-            Add("Вставить нижним регистром", "", () => PasteTransformed(item, t => t.ToLowerInvariant()));
-            Add("Вставить без лишних пробелов", "", () => PasteTransformed(item, CollapseSpaces));
+            Add(Loc.T("MenuUpper"), "", () => PasteTransformed(item, t => t.ToUpperInvariant()));
+            Add(Loc.T("MenuLower"), "", () => PasteTransformed(item, t => t.ToLowerInvariant()));
+            Add(Loc.T("MenuTrim"), "", () => PasteTransformed(item, CollapseSpaces));
             if ((item.PreviewText ?? "").Contains('\n'))
-                Add("Вставить в одну строку", "", () => PasteTransformed(item, t => Regex.Replace(t.Trim(), @"\s*\r?\n\s*", " ")));
+                Add(Loc.T("MenuOneLine"), "", () => PasteTransformed(item, t => Regex.Replace(t.Trim(), @"\s*\r?\n\s*", " ")));
         }
 
         ItemMenu.Items.Add(new Separator());
-        var del = Add("Удалить", "", () => DeleteItem(item), "Del");
+        var del = Add(Loc.T("MenuDelete"), "", () => DeleteItem(item), "Del");
         del.Foreground = (Brush)FindResource("Danger");
     }
 

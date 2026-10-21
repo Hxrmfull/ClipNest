@@ -76,6 +76,12 @@ public sealed class Storage : IDisposable
         {
             Exec("UPDATE items SET search = replace(search, 'ё', 'е') WHERE instr(search, 'ё') > 0; PRAGMA user_version = 3;");
         }
+        if (UserVersion() < 4)
+        {
+            // the words added for English and Chinese (see SecretWords, ImageWords)
+            Exec("UPDATE items SET search = search || ' hidden password 秘密 机密 密码 隐藏' WHERE secret = 1;"
+                + "UPDATE items SET search = search || ' picture 图片 图像' WHERE kind = 2 AND secret = 0; PRAGMA user_version = 4;");
+        }
         EncryptPlainImages();
     }
 
@@ -299,16 +305,20 @@ public sealed class Storage : IDisposable
     private static long ToUnix(DateTime t) => new DateTimeOffset(t).ToUnixTimeMilliseconds();
     private static DateTime FromUnix(long ms) => DateTimeOffset.FromUnixTimeMilliseconds(ms).LocalDateTime;
 
+    // a secret or a picture is found by these words in any of the interface languages
+    private const string SecretWords = "секрет скрыто пароль secret hidden password 秘密 机密 密码 隐藏";
+    private const string ImageWords = "изображение картинка image picture 图片 图像";
+
     private static string SearchKey(ClipItem i)
     {
         // secrets are findable only by source and kind, never by content
-        if (i.Secret) return Normalize($"{i.Source}\nсекрет скрыто пароль secret");
+        if (i.Secret) return Normalize($"{i.Source}\n{SecretWords}");
 
         var sb = new StringBuilder();
         // huge texts are stored whole, but only their beginning is searchable
         var text = i.Text is { Length: > SearchChars } t ? t[..SearchChars] : i.Text;
         sb.Append(text).Append('\n').Append(i.Files).Append('\n').Append(i.Source);
-        if (i.Kind == ClipKind.Image) sb.Append("\nизображение картинка image\n").Append(i.OcrText); // text read off the picture
+        if (i.Kind == ClipKind.Image) sb.Append('\n').Append(ImageWords).Append('\n').Append(i.OcrText); // text read off the picture
         return Normalize(sb.ToString());
     }
 

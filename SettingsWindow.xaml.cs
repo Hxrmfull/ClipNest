@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using ClipNest.Services;
 
@@ -10,10 +11,13 @@ namespace ClipNest;
 public partial class SettingsWindow : Window
 {
     private int _scaleBefore = App.Settings.PopupScale;
+    /// <summary>A size chip checked from code (on load, after a cancelled preview): that one shows no preview.</summary>
+    private bool _settingChip;
 
     public SettingsWindow()
     {
         InitializeComponent();
+        Language = Loc.Xml;
         App.Current.Popup.SizingEnded += OnSizingEnded;
         foreach (var chip in new[] { Size80, Size90, Size100, Size110, Size125 })
             chip.Checked += (_, _) => PreviewScale();
@@ -35,7 +39,8 @@ public partial class SettingsWindow : Window
         Autostart.IsChecked = s.Autostart;
         MoveUsedToTop.IsChecked = s.MoveUsedToTop;
         (s.Theme switch { ThemeMode.Dark => ThemeDark, ThemeMode.Light => ThemeLight, _ => ThemeSystem }).IsChecked = true;
-        (s.PopupScale switch { <= 85 => Size80, <= 95 => Size90, <= 105 => Size100, <= 117 => Size110, _ => Size125 }).IsChecked = true;
+        (s.Language switch { UiLanguage.Russian => LangRu, UiLanguage.Chinese => LangZh, _ => LangEn }).IsChecked = true;
+        SelectScaleChip(s.PopupScale);
         MaxItems.Text = s.MaxItems.ToString();
         MaxAgeDays.Text = s.MaxAgeDays.ToString();
         SaveImages.IsChecked = s.SaveImages;
@@ -48,9 +53,9 @@ public partial class SettingsWindow : Window
         {
             ScanImages.IsEnabled = false;
 #if OCR
-            ScanImagesHint.Text = "В Windows не установлен ни один язык распознавания текста (Параметры → Время и язык → Язык).";
+            ScanImagesHint.Text = Loc.T("ScanNoOcrLanguage");
 #else
-            ScanImagesHint.Text = "Эта версия ClipNest без распознавания текста. Оно есть в версии с OCR.";
+            ScanImagesHint.Text = Loc.T("ScanLiteEdition");
 #endif
         }
         Excluded.Text = string.Join(Environment.NewLine, s.ExcludedApps);
@@ -60,14 +65,14 @@ public partial class SettingsWindow : Window
         if (DataLocation.IsPortable)
         {
             ChangeFolder.IsEnabled = ResetFolder.IsEnabled = false;
-            DataHint.Text = "Портативный режим (portable.txt): данные хранятся рядом с программой.";
+            DataHint.Text = Loc.T("DataPortable");
         }
         if (!App.Hook.IsInstalled) ReplaceWinV.IsEnabled = false;
         UpdateStats();
     }
 
     private void UpdateStats() =>
-        Stats.Text = $"{Ru.Plural(App.Storage.Count(), "запись", "записи", "записей")}  ·  {Ru.Bytes(App.Storage.DiskUsage())} на диске";
+        Stats.Text = Loc.F("Stats", Loc.Count(App.Storage.Count(), "Items"), Loc.Bytes(App.Storage.DiskUsage()));
 
     private static int ParseInt(string s) => int.TryParse(s.Trim(), out var v) && v > 0 ? v : 0;
 
@@ -85,37 +90,49 @@ public partial class SettingsWindow : Window
         Size80.IsChecked == true ? 80 : Size90.IsChecked == true ? 90 : Size110.IsChecked == true ? 110
             : Size125.IsChecked == true ? 125 : 100;
 
-    /// <summary>While the popup is shown for sizing, a size chip applies at once (kept only on «Сохранить»).</summary>
+    private void SelectScaleChip(int scale)
+    {
+        _settingChip = true;
+        (scale switch { <= 85 => Size80, <= 95 => Size90, <= 105 => Size100, <= 117 => Size110, _ => Size125 }).IsChecked = true;
+        _settingChip = false;
+    }
+
+    /// <summary>A size chip shows the clipboard window in that size at once, the same preview as sizing by mouse
+    /// (it can be dragged further there). «Готово», Enter or «Сохранить» keep it; Esc or closing this window drop it.</summary>
     private void PreviewScale()
     {
-        if (!IsLoaded || !App.Current.Popup.IsSizing) return;
+        if (!IsLoaded || _settingChip) return;
         App.Settings.PopupScale = ChosenScale();
-        App.Current.Popup.RefreshSize();
+        if (App.Current.Popup.IsSizing) App.Current.Popup.RefreshSize();
+        else StartSizing();
     }
 
     private void SizeByMouse_Click(object sender, RoutedEventArgs e)
     {
-        var popup = App.Current.Popup;
-        if (popup.IsSizing)
-        {
-            popup.EndSizing(true); // «Готово»
-            return;
-        }
+        if (App.Current.Popup.IsSizing) App.Current.Popup.EndSizing(true); // «Готово»
+        else StartSizing();
+    }
+
+    private void StartSizing()
+    {
         App.Settings.PopupScale = ChosenScale(); // size what is picked above
-        popup.BeginSizing(new System.Windows.Interop.WindowInteropHelper(this).Handle);
-        SizeByMouse.Content = "Готово";
-        SizeHint.Text = "Тяните окно истории за правый или нижний край или за уголок. «Готово» сохранит размер, Esc в окне — отмена.";
+        App.Current.Popup.BeginSizing(new System.Windows.Interop.WindowInteropHelper(this).Handle);
+        SizeByMouse.Content = Loc.T("SizeDone");
+        SizeHint.Text = Loc.T("SizeHintSizing");
     }
 
     private void OnSizingEnded(bool kept)
     {
-        // «Готово» has saved the scale shown while sizing along with the size; a cancel drops the preview
+        // «Готово» has saved the scale shown while sizing along with the size; a cancel drops the preview,
+        // and the chip it came from goes back too
         if (kept) _scaleBefore = App.Settings.PopupScale;
-        else App.Settings.PopupScale = _scaleBefore;
-        SizeByMouse.Content = "Изменить размер мышью";
-        SizeHint.Text = kept
-            ? $"Размер сохранён: {App.Settings.PopupWidth} × {App.Settings.PopupHeight}."
-            : "Изменение размера отменено.";
+        else
+        {
+            App.Settings.PopupScale = _scaleBefore;
+            SelectScaleChip(_scaleBefore);
+        }
+        SizeByMouse.SetResourceReference(ContentControl.ContentProperty, "s.SizeByMouse");
+        SizeHint.Text = kept ? Loc.F("SizeSaved", App.Settings.PopupWidth, App.Settings.PopupHeight) : Loc.T("SizeCancelled");
         Activate();
     }
 
@@ -125,7 +142,7 @@ public partial class SettingsWindow : Window
         App.Settings.PopupWidth = 420;
         App.Settings.PopupHeight = 600;
         App.Settings.Save();
-        SizeHint.Text = "Ширина и высота сброшены: 420 × 600.";
+        SizeHint.Text = Loc.T("SizeWasReset");
     }
 
     private void ApplyForm()
@@ -135,6 +152,7 @@ public partial class SettingsWindow : Window
         s.Autostart = Autostart.IsChecked == true;
         s.MoveUsedToTop = MoveUsedToTop.IsChecked == true;
         s.Theme = ThemeDark.IsChecked == true ? ThemeMode.Dark : ThemeLight.IsChecked == true ? ThemeMode.Light : ThemeMode.System;
+        s.Language = LangRu.IsChecked == true ? UiLanguage.Russian : LangZh.IsChecked == true ? UiLanguage.Chinese : UiLanguage.English;
         s.PopupScale = ChosenScale();
         s.MaxItems = ParseInt(MaxItems.Text);
         s.MaxAgeDays = ParseInt(MaxAgeDays.Text);
@@ -166,7 +184,7 @@ public partial class SettingsWindow : Window
     {
         var dlg = new Microsoft.Win32.OpenFolderDialog
         {
-            Title = "Где хранить историю ClipNest",
+            Title = Loc.T("FolderDialogTitle"),
             InitialDirectory = App.Storage.DataDir,
         };
         if (dlg.ShowDialog(this) != true) return;
@@ -179,8 +197,8 @@ public partial class SettingsWindow : Window
     {
         if (DataLocation.SamePath(dir, App.Storage.DataDir)) return;
         var text = DataLocation.HasHistory(dir)
-            ? $"В папке «{dir}» уже есть история ClipNest. Переключиться на неё?\n\nТекущая история останется в «{App.Storage.DataDir}»."
-            : $"Перенести историю, картинки и настройки в «{dir}»?\n\nClipNest перезапустится.";
+            ? Loc.F("FolderSwitch", dir, App.Storage.DataDir)
+            : Loc.F("FolderMove", dir);
         if (MessageBox.Show(this, text, "ClipNest", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.OK)
             != MessageBoxResult.OK) return;
         ApplyForm(); // keep what was changed in this window: settings.json moves along
@@ -189,7 +207,7 @@ public partial class SettingsWindow : Window
 
     private void Clear_Click(object sender, RoutedEventArgs e)
     {
-        var r = MessageBox.Show(this, "Удалить всю историю, кроме закреплённых записей? Это нельзя отменить.",
+        var r = MessageBox.Show(this, Loc.T("ClearConfirm"),
             "ClipNest", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
         if (r != MessageBoxResult.Yes) return;
         App.Storage.ClearUnpinned();

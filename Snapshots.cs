@@ -101,14 +101,18 @@ internal static class Snapshots
                 ("1920x1080@150%", 1920, 1032, 1.5), ("1280x720@150%", 1280, 680, 1.5),
             };
             int[] scales = { 80, 90, 100, 110, 125 };
-            var sizes = new (int w, int h)[] { (420, 600), (400, 380), (800, 500), (420, 1000), (1200, 900), (3000, 3000) };
+            var sizes = new (int w, int h)[] { (420, 600), (400, 380), (800, 500), (420, 1000), (1200, 900), (3000, 3000), (555, 665) };
             string[] states = { "list", "images", "search", "empty", "sizing" };
             var s = App.Settings;
             int cases = 0, badCases = 0;
             var noTab = new SortedSet<string>();
             var narrowing = new List<double>();
-            var longestCount = Ru.Plural(1_234_567, "запись", "записи", "записей");
-
+            string drift = "";
+            // the texts differ in length a lot from language to language: every layout in each of them
+            foreach (var (language, lang) in new[] { (UiLanguage.Russian, "ru"), (UiLanguage.English, "en"), (UiLanguage.Chinese, "zh") })
+            {
+            Loc.Apply(language);
+            var longestCount = Loc.Count(1_234_567, "Items");
             foreach (var (mode, theme) in new[] { (ThemeMode.Dark, "dark"), (ThemeMode.Light, "light") })
             {
                 Theme.Apply(mode);
@@ -144,8 +148,16 @@ internal static class Snapshots
                         cases++;
                         var found = new List<string>();
                         Inspect(popup, state, found);
-                        string label = $"{theme} {state} {mon.name} {scale}% {size.w}x{size.h} -> {popup.Width:0}x{popup.Height:0} (x{popup.AppliedScale:0.###})";
-                        if (!popup.TabHint.IsVisible) noTab.Add($"{popup.Width / popup.AppliedScale:0}x{popup.Height / popup.AppliedScale:0}@{popup.AppliedScale:0.##}");
+                        // a preview confirmed without dragging must save exactly the size it was opened with
+                        var (bw, bh) = popup.BaseSize();
+                        double sc = popup.AppliedScale;
+                        bool wFree = Math.Abs(popup.Width - size.w * sc) < 1, hFree = Math.Abs(popup.Height - size.h * sc) < 1; // not cut to the screen
+                        if ((wFree && Math.Round(bw) != size.w) || (hFree && Math.Round(bh) != size.h))
+                            found.Add($"a confirmed preview would save {Math.Round(bw)}x{Math.Round(bh)} instead of {size.w}x{size.h}");
+                        if (size == (555, 665) && scale == 90 && mon.name == "2560x1440" && state == "list" && theme == "dark")
+                            drift = $"555x665 at 90%: worked back from the window {Math.Round(popup.ActualWidth / sc)}x{Math.Round(popup.ActualHeight / sc)}, kept {Math.Round(bw)}x{Math.Round(bh)}";
+                        string label = $"{lang} {theme} {state} {mon.name} {scale}% {size.w}x{size.h} -> {popup.Width:0}x{popup.Height:0} (x{popup.AppliedScale:0.###})";
+                        if (!popup.TabHint.IsVisible) noTab.Add($"{lang} {popup.Width / popup.AppliedScale:0}x{popup.Height / popup.AppliedScale:0}@{popup.AppliedScale:0.##}");
                         if (found.Count > 0)
                         {
                             badCases++;
@@ -154,7 +166,7 @@ internal static class Snapshots
                         }
                         if ((shot || found.Count > 0) && shots.Count < 40)
                         {
-                            var file = Path.Combine(dir, $"{theme}-{state}-{shots.Count:00}.png");
+                            var file = Path.Combine(dir, $"{lang}-{theme}-{state}-{shots.Count:00}.png");
                             Save(popup.Root, file, Color.FromRgb(0x5A, 0x64, 0x78), 1);
                             shots.Add(((found.Count > 0 ? "BAD " : "") + $"{mon.name} {scale}% {size.w}x{size.h}", file));
                         }
@@ -162,7 +174,7 @@ internal static class Snapshots
                     popup.SizingOverlay.Visibility = Visibility.Collapsed;
                     popup.PausedBadge.Visibility = Visibility.Collapsed;
                     popup.HidePopup();
-                    Sheet(shots, Path.Combine(dir, $"sheet-{theme}-{state}.png"));
+                    Sheet(shots, Path.Combine(dir, $"sheet-{lang}-{theme}-{state}.png"));
                 }
             }
             foreach (var (mode, theme) in new[] { (ThemeMode.Dark, "dark"), (ThemeMode.Light, "light") })
@@ -179,8 +191,8 @@ internal static class Snapshots
                     sw.Show();
                     if (sizing)
                     {
-                        sw.SizeByMouse.Content = "Готово";
-                        sw.SizeHint.Text = "Тяните окно истории за правый или нижний край или за уголок. «Готово» сохранит размер, Esc в окне — отмена.";
+                        sw.SizeByMouse.Content = Loc.T("SizeDone");
+                        sw.SizeHint.Text = Loc.T("SizeHintSizing");
                     }
                     await Task.Delay(300);
                     sw.UpdateLayout();
@@ -188,23 +200,25 @@ internal static class Snapshots
                     var found = new List<string>();
                     CutOff(content, found);
                     var win = new Rect(0, 0, content.ActualWidth, content.ActualHeight);
-                    foreach (var e in new FrameworkElement[] { sw.Size80, sw.Size125, sw.ResetSize, sw.SizeByMouse, sw.SizeHint })
+                    foreach (var e in new FrameworkElement[] { sw.Size80, sw.Size125, sw.ResetSize, sw.SizeByMouse, sw.SizeHint, sw.LangRu, sw.LangZh })
                         if (!Inflate(win).Contains(Bounds(e, content))) found.Add($"outside the window: {Describe(e)}");
                     cases++;
-                    string label = $"{theme} settings {width} wide{(sizing ? ", sizing" : "")}";
+                    string label = $"{lang} {theme} settings {width} wide{(sizing ? ", sizing" : "")}";
                     if (found.Count > 0)
                     {
                         badCases++;
                         report.AppendLine("BAD  " + label);
                         foreach (var f in found.Distinct()) report.AppendLine("       " + f);
                     }
-                    Save(content, Path.Combine(dir, $"{theme}-settings-{width}{(sizing ? "-sizing" : "")}.png"), ((SolidColorBrush)sw.Background).Color, 1);
+                    Save(content, Path.Combine(dir, $"{lang}-{theme}-settings-{width}{(sizing ? "-sizing" : "")}.png"), ((SolidColorBrush)sw.Background).Color, 1);
                     sw.Close();
                 }
             }
+            }
             report.Insert(0, $"layouts checked: {cases}, with problems: {badCases}{Environment.NewLine}"
                 + $"layout after making the list narrower (cards re-laid out): median {(narrowing.Count > 0 ? Median(narrowing) : 0):0.0} ms, max {(narrowing.Count > 0 ? narrowing.Max() : 0):0.0} ms over {narrowing.Count}{Environment.NewLine}"
-                + $"«Tab фильтр» made way for a 7-digit count at (size at 100% @ scale): {string.Join(", ", noTab)}{Environment.NewLine}");
+                + $"{drift}{Environment.NewLine}"
+                + $"the Tab hint made way for a 7-digit count at (language size at 100% @ scale): {string.Join(", ", noTab)}{Environment.NewLine}");
         }
         catch (Exception ex)
         {

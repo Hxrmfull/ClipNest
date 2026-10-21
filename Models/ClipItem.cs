@@ -123,7 +123,7 @@ public sealed partial class ClipItem : INotifyPropertyChanged
                 var files = FileList;
                 var names = string.Join("\n", files.Take(4).Select(f => Path.GetFileName(f.TrimEnd('\\')) is { Length: > 0 } n ? n : f));
                 long total = Math.Max(Size, files.Length);
-                return total > 4 ? names + $"\n… и ещё {total - 4}" : names;
+                return total > 4 ? names + "\n" + Loc.F("MoreFiles", total - 4) : names;
             case ClipKind.Image:
                 return "";
             default:
@@ -156,33 +156,33 @@ public sealed partial class ClipItem : INotifyPropertyChanged
         {
             case ClipKind.Image:
                 parts.Add($"{Width}×{Height}");
-                parts.Add(Ru.Bytes(Size));
-                if (Secret) parts.Add("скрыто");
+                parts.Add(Loc.Bytes(Size));
+                if (Secret) parts.Add(Loc.T("Hidden"));
                 break;
             case ClipKind.Files:
-                parts.Add(Ru.Plural(Math.Max(Size, FileList.Length), "файл", "файла", "файлов"));
+                parts.Add(Loc.Count(Math.Max(Size, FileList.Length), "FileCount"));
                 break;
             case ClipKind.Text when Secret:
-                parts.Add("секретное · зашифровано");
+                parts.Add(Loc.T("SecretEncrypted"));
                 break;
             default:
                 long chars = Size > 0 ? Size / 2 : Body.Length;
-                parts.Add(Ru.Plural(chars, "симв.", "симв.", "симв."));
+                parts.Add(Loc.Count(chars, "Chars"));
                 var body = Body;
                 // line count only when the whole text is at hand
                 if (body.Length >= chars)
                 {
                     int lines = 1;
                     foreach (var c in body) if (c == '\n') lines++;
-                    if (lines > 1) parts.Add(Ru.Plural(lines, "строка", "строки", "строк"));
+                    if (lines > 1) parts.Add(Loc.Count(lines, "Lines"));
                 }
-                if (HasRichFormat) parts.Add("формат");
+                if (HasRichFormat) parts.Add(Loc.T("Formatted"));
                 break;
         }
         return string.Join("  ·  ", parts);
     }
 
-    public string TimeAgo => Ru.TimeAgo(Stamp);
+    public string TimeAgo => Loc.TimeAgo(Stamp);
 
     private bool _swatchDone;
     private Brush? _swatch;

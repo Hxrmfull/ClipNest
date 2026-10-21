@@ -1,7 +1,7 @@
 <Window x:Class="ClipNest.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="ClipNest — настройки"
+        Title="{DynamicResource s.SettingsTitle}"
         Width="560" Height="720" MinWidth="460" MinHeight="420"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowBg}"
@@ -53,28 +53,28 @@
                     <Image Source="pack://application:,,,/Assets/clipnest.ico" Width="40" Height="40"/>
                     <StackPanel Margin="14,0,0,0" VerticalAlignment="Center">
                         <TextBlock Text="ClipNest" FontSize="20" FontWeight="SemiBold"/>
-                        <TextBlock Text="История буфера обмена без ограничений" Foreground="{DynamicResource TextSecondary}"/>
+                        <TextBlock Text="{DynamicResource s.Tagline}" Foreground="{DynamicResource TextSecondary}"/>
                     </StackPanel>
                 </StackPanel>
 
-                <TextBlock Text="Общие" Style="{StaticResource SectionTitle}"/>
+                <TextBlock Text="{DynamicResource s.General}" Style="{StaticResource SectionTitle}"/>
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <CheckBox x:Name="ReplaceWinV" Style="{StaticResource Switch}" Margin="0,10">
                             <StackPanel>
-                                <TextBlock Text="Открывать по Win+V" TextWrapping="Wrap"/>
-                                <TextBlock Style="{StaticResource Hint}" Text="Вместо встроенного буфера обмена Windows."/>
+                                <TextBlock Text="{DynamicResource s.OpenWinV}" TextWrapping="Wrap"/>
+                                <TextBlock Style="{StaticResource Hint}" Text="{DynamicResource s.OpenWinVHint}"/>
                             </StackPanel>
                         </CheckBox>
                         <Border Style="{StaticResource Divider}"/>
                         <CheckBox x:Name="Autostart" Style="{StaticResource Switch}" Margin="0,10">
-                            <TextBlock Text="Запускать вместе с Windows" TextWrapping="Wrap"/>
+                            <TextBlock Text="{DynamicResource s.Autostart}" TextWrapping="Wrap"/>
                         </CheckBox>
                         <Border Style="{StaticResource Divider}"/>
                         <CheckBox x:Name="MoveUsedToTop" Style="{StaticResource Switch}" Margin="0,10">
                             <StackPanel>
-                                <TextBlock Text="Поднимать вставленное наверх" TextWrapping="Wrap"/>
-                                <TextBlock Style="{StaticResource Hint}" Text="Часто используемые записи всегда под рукой."/>
+                                <TextBlock Text="{DynamicResource s.MoveToTop}" TextWrapping="Wrap"/>
+                                <TextBlock Style="{StaticResource Hint}" Text="{DynamicResource s.MoveToTopHint}"/>
                             </StackPanel>
                         </CheckBox>
                         <Border Style="{StaticResource Divider}"/>
@@ -83,18 +83,32 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="Тема" VerticalAlignment="Center"/>
+                            <TextBlock Text="{DynamicResource s.Theme}" VerticalAlignment="Center"/>
                             <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                <RadioButton x:Name="ThemeSystem" GroupName="theme" Style="{StaticResource Chip}" Content="Системная" Focusable="True"/>
-                                <RadioButton x:Name="ThemeDark" GroupName="theme" Style="{StaticResource Chip}" Content="Тёмная" Focusable="True"/>
-                                <RadioButton x:Name="ThemeLight" GroupName="theme" Style="{StaticResource Chip}" Content="Светлая" Margin="0" Focusable="True"/>
+                                <RadioButton x:Name="ThemeSystem" GroupName="theme" Style="{StaticResource Chip}" Content="{DynamicResource s.ThemeSystem}" Focusable="True"/>
+                                <RadioButton x:Name="ThemeDark" GroupName="theme" Style="{StaticResource Chip}" Content="{DynamicResource s.ThemeDark}" Focusable="True"/>
+                                <RadioButton x:Name="ThemeLight" GroupName="theme" Style="{StaticResource Chip}" Content="{DynamicResource s.ThemeLight}" Margin="0" Focusable="True"/>
                             </StackPanel>
+                        </Grid>
+                        <Border Style="{StaticResource Divider}"/>
+                        <Grid Style="{StaticResource Row}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{DynamicResource s.Language}" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,12,0"/>
+                            <!-- each language in its own name, so it is found whatever the interface speaks now -->
+                            <WrapPanel Grid.Column="1" HorizontalAlignment="Right">
+                                <RadioButton x:Name="LangRu" GroupName="lang" Style="{StaticResource Chip}" Content="Русский" Focusable="True"/>
+                                <RadioButton x:Name="LangEn" GroupName="lang" Style="{StaticResource Chip}" Content="English" Focusable="True"/>
+                                <RadioButton x:Name="LangZh" GroupName="lang" Style="{StaticResource Chip}" Content="中文" Margin="0" Focusable="True"/>
+                            </WrapPanel>
                         </Grid>
                         <Border Style="{StaticResource Divider}"/>
                         <!-- stacked rather than label | control: reads well down to the window's minimum width -->
                         <StackPanel Margin="0,10,0,12">
-                            <TextBlock Text="Размер окна истории" TextWrapping="Wrap"/>
-                            <TextBlock Style="{StaticResource Hint}" Text="Текст, карточки и картинки вместе. Окно никогда не займёт больше 90% экрана."/>
+                            <TextBlock Text="{DynamicResource s.PopupSize}" TextWrapping="Wrap"/>
+                            <TextBlock Style="{StaticResource Hint}" Text="{DynamicResource s.PopupSizeHint}"/>
                             <WrapPanel Margin="0,10,0,0">
                                 <RadioButton x:Name="Size80" GroupName="size" Style="{StaticResource Chip}" Content="80%" Focusable="True"/>
                                 <RadioButton x:Name="Size90" GroupName="size" Style="{StaticResource Chip}" Content="90%" Focusable="True"/>
@@ -103,18 +117,18 @@
                                 <RadioButton x:Name="Size125" GroupName="size" Style="{StaticResource Chip}" Content="125%" Focusable="True"/>
                             </WrapPanel>
                             <TextBlock x:Name="SizeHint" Style="{StaticResource Hint}" Margin="0,12,0,0"
-                                       Text="Или задайте ширину и высоту мышью. В обычной работе окно не растягивается, так что размер случайно не изменится."/>
+                                       Text="{DynamicResource s.SizeHintIdle}"/>
                             <WrapPanel Margin="0,8,0,0">
-                                <Button x:Name="SizeByMouse" Style="{StaticResource SecondaryButton}" Content="Изменить размер мышью"
+                                <Button x:Name="SizeByMouse" Style="{StaticResource SecondaryButton}" Content="{DynamicResource s.SizeByMouse}"
                                         Click="SizeByMouse_Click" Margin="0,0,8,0"/>
-                                <Button x:Name="ResetSize" Style="{StaticResource SecondaryButton}" Content="Сбросить"
-                                        Click="ResetSize_Click" ToolTip="Ширина и высота по умолчанию (420 × 600)"/>
+                                <Button x:Name="ResetSize" Style="{StaticResource SecondaryButton}" Content="{DynamicResource s.SizeReset}"
+                                        Click="ResetSize_Click" ToolTip="{DynamicResource s.SizeResetTip}"/>
                             </WrapPanel>
                         </StackPanel>
                     </StackPanel>
                 </Border>
 
-                <TextBlock Text="История" Style="{StaticResource SectionTitle}"/>
+                <TextBlock Text="{DynamicResource s.HistorySection}" Style="{StaticResource SectionTitle}"/>
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <Grid Style="{StaticResource Row}">
@@ -123,8 +137,8 @@
                                 <ColumnDefinition Width="110"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel>
-                                <TextBlock Text="Сколько записей хранить" TextWrapping="Wrap"/>
-                                <TextBlock Style="{StaticResource Hint}" Text="0 — без ограничений. Закреплённые не считаются и не удаляются."/>
+                                <TextBlock Text="{DynamicResource s.MaxItems}" TextWrapping="Wrap"/>
+                                <TextBlock Style="{StaticResource Hint}" Text="{DynamicResource s.MaxItemsHint}"/>
                             </StackPanel>
                             <TextBox x:Name="MaxItems" Grid.Column="1" Style="{StaticResource Field}" VerticalAlignment="Center"
                                      PreviewTextInput="Digits_PreviewTextInput"/>
@@ -136,15 +150,15 @@
                                 <ColumnDefinition Width="110"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel>
-                                <TextBlock Text="Сколько дней хранить" TextWrapping="Wrap"/>
-                                <TextBlock Style="{StaticResource Hint}" Text="0 — бессрочно."/>
+                                <TextBlock Text="{DynamicResource s.MaxDays}" TextWrapping="Wrap"/>
+                                <TextBlock Style="{StaticResource Hint}" Text="{DynamicResource s.MaxDaysHint}"/>
                             </StackPanel>
                             <TextBox x:Name="MaxAgeDays" Grid.Column="1" Style="{StaticResource Field}" VerticalAlignment="Center"
                                      PreviewTextInput="Digits_PreviewTextInput"/>
                         </Grid>
                         <Border Style="{StaticResource Divider}"/>
                         <CheckBox x:Name="SaveImages" Style="{StaticResource Switch}" Margin="0,10">
-                            <TextBlock Text="Сохранять изображения" TextWrapping="Wrap"/>
+                            <TextBlock Text="{DynamicResource s.SaveImages}" TextWrapping="Wrap"/>
                         </CheckBox>
                         <Border Style="{StaticResource Divider}"/>
                         <Grid Style="{StaticResource Row}">
@@ -153,8 +167,8 @@
                                 <ColumnDefinition Width="110"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel>
-                                <TextBlock Text="Максимальный размер изображения, МБ" TextWrapping="Wrap"/>
-                                <TextBlock Style="{StaticResource Hint}" Text="0 — без ограничений. У встроенного буфера Windows лимит 4 МБ."/>
+                                <TextBlock Text="{DynamicResource s.MaxImage}" TextWrapping="Wrap"/>
+                                <TextBlock Style="{StaticResource Hint}" Text="{DynamicResource s.MaxImageHint}"/>
                             </StackPanel>
                             <TextBox x:Name="MaxImageMb" Grid.Column="1" Style="{StaticResource Field}" VerticalAlignment="Center"
                                      PreviewTextInput="Digits_PreviewTextInput"/>
@@ -162,41 +176,41 @@
                     </StackPanel>
                 </Border>
 
-                <TextBlock Text="Конфиденциальность" Style="{StaticResource SectionTitle}"/>
+                <TextBlock Text="{DynamicResource s.Privacy}" Style="{StaticResource SectionTitle}"/>
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <CheckBox x:Name="HideSecrets" Style="{StaticResource Switch}" Margin="0,10">
                             <StackPanel>
-                                <TextBlock Text="Скрывать пароли и ключи" TextWrapping="Wrap"/>
-                                <TextBlock Style="{StaticResource Hint}" Text="Пароли, токены, ключи API и номера карт закрываются спойлером, как в Telegram, и шифруются на диске. Показать: значок глаза или Ctrl+H."/>
+                                <TextBlock Text="{DynamicResource s.HideSecrets}" TextWrapping="Wrap"/>
+                                <TextBlock Style="{StaticResource Hint}" Text="{DynamicResource s.HideSecretsHint}"/>
                             </StackPanel>
                         </CheckBox>
                         <Border Style="{StaticResource Divider}"/>
                         <CheckBox x:Name="ScanImages" Style="{StaticResource Switch}" Margin="0,10">
                             <StackPanel>
-                                <TextBlock Text="Искать секреты на картинках" TextWrapping="Wrap"/>
+                                <TextBlock Text="{DynamicResource s.ScanImages}" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="ScanImagesHint" Style="{StaticResource Hint}"
-                                           Text="Новые картинки читаются распознаванием текста, встроенным в Windows (на этом компьютере, без интернета). Найденные пароли, токены и номера карт размываются, картинка шифруется. Вставляется она без размытия."/>
+                                           Text="{DynamicResource s.ScanImagesHint}"/>
                             </StackPanel>
                         </CheckBox>
                         <Border Style="{StaticResource Divider}"/>
                         <CheckBox x:Name="ClearSecrets" Style="{StaticResource Switch}" Margin="0,10">
                             <StackPanel>
-                                <TextBlock Text="Убирать вставленный секрет из буфера через минуту" TextWrapping="Wrap"/>
-                                <TextBlock Style="{StaticResource Hint}" Text="Как в менеджерах паролей. Если за это время вы скопировали что-то другое, буфер не трогается. В истории ClipNest секрет остаётся."/>
+                                <TextBlock Text="{DynamicResource s.ClearSecrets}" TextWrapping="Wrap"/>
+                                <TextBlock Style="{StaticResource Hint}" Text="{DynamicResource s.ClearSecretsHint}"/>
                             </StackPanel>
                         </CheckBox>
                         <Border Style="{StaticResource Divider}"/>
                         <CheckBox x:Name="RespectPrivacy" Style="{StaticResource Switch}" Margin="0,10">
                             <StackPanel>
-                                <TextBlock Text="Не сохранять данные из менеджеров паролей" TextWrapping="Wrap"/>
-                                <TextBlock Style="{StaticResource Hint}" Text="То, что они помечают как «не для истории». Если выключить, такие записи будут сохраняться скрытыми и зашифрованными."/>
+                                <TextBlock Text="{DynamicResource s.RespectPrivacy}" TextWrapping="Wrap"/>
+                                <TextBlock Style="{StaticResource Hint}" Text="{DynamicResource s.RespectPrivacyHint}"/>
                             </StackPanel>
                         </CheckBox>
                         <Border Style="{StaticResource Divider}"/>
                         <StackPanel Margin="0,10,0,12">
-                            <TextBlock Text="Не записывать из программ" TextWrapping="Wrap"/>
-                            <TextBlock Style="{StaticResource Hint}" Text="Имя .exe, по одному в строке."/>
+                            <TextBlock Text="{DynamicResource s.Excluded}" TextWrapping="Wrap"/>
+                            <TextBlock Style="{StaticResource Hint}" Text="{DynamicResource s.ExcludedHint}"/>
                             <TextBox x:Name="Excluded" Style="{StaticResource Field}" Margin="0,8,0,0" AcceptsReturn="True"
                                      Height="96" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"
                                      FontFamily="{StaticResource MonoFont}" FontSize="12"/>
@@ -204,7 +218,7 @@
                     </StackPanel>
                 </Border>
 
-                <TextBlock Text="Данные" Style="{StaticResource SectionTitle}"/>
+                <TextBlock Text="{DynamicResource s.DataSection}" Style="{StaticResource SectionTitle}"/>
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <Grid Style="{StaticResource Row}">
@@ -214,22 +228,22 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock x:Name="Stats" Text="…" TextWrapping="Wrap"/>
-                                <TextBlock Style="{StaticResource Hint}" Text="Записи, картинки и настройки."/>
+                                <TextBlock Style="{StaticResource Hint}" Text="{DynamicResource s.StatsHint}"/>
                             </StackPanel>
-                            <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="Открыть папку"
+                            <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="{DynamicResource s.OpenFolder}"
                                     Click="OpenFolder_Click" VerticalAlignment="Center" Margin="12,0,0,0"/>
                         </Grid>
                         <Border Style="{StaticResource Divider}"/>
                         <StackPanel Margin="0,10,0,12">
-                            <TextBlock Text="Папка с данными" TextWrapping="Wrap"/>
+                            <TextBlock Text="{DynamicResource s.DataFolder}" TextWrapping="Wrap"/>
                             <TextBlock x:Name="DataPath" Style="{StaticResource Hint}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
                             <TextBlock x:Name="DataHint" Style="{StaticResource Hint}"
-                                       Text="История будет перенесена в новую папку, ClipNest перезапустится."/>
+                                       Text="{DynamicResource s.DataFolderHint}"/>
                             <WrapPanel Margin="0,8,0,0">
-                                <Button x:Name="ChangeFolder" Style="{StaticResource SecondaryButton}" Content="Изменить…"
+                                <Button x:Name="ChangeFolder" Style="{StaticResource SecondaryButton}" Content="{DynamicResource s.ChangeFolder}"
                                         Click="ChangeFolder_Click" Margin="0,0,8,0"/>
-                                <Button x:Name="ResetFolder" Style="{StaticResource SecondaryButton}" Content="По умолчанию"
-                                        Click="ResetFolder_Click" ToolTip="Вернуть в Документы\ClipNest"/>
+                                <Button x:Name="ResetFolder" Style="{StaticResource SecondaryButton}" Content="{DynamicResource s.DefaultFolder}"
+                                        Click="ResetFolder_Click" ToolTip="{DynamicResource s.DefaultFolderTip}"/>
                             </WrapPanel>
                         </StackPanel>
                         <Border Style="{StaticResource Divider}"/>
@@ -239,25 +253,25 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel>
-                                <TextBlock Text="Очистить историю" TextWrapping="Wrap"/>
-                                <TextBlock Style="{StaticResource Hint}" Text="Закреплённые записи останутся."/>
+                                <TextBlock Text="{DynamicResource s.ClearHistory}" TextWrapping="Wrap"/>
+                                <TextBlock Style="{StaticResource Hint}" Text="{DynamicResource s.ClearHistoryHint}"/>
                             </StackPanel>
-                            <Button Grid.Column="1" Style="{StaticResource DangerButton}" Content="Очистить…"
+                            <Button Grid.Column="1" Style="{StaticResource DangerButton}" Content="{DynamicResource s.ClearButton}"
                                     Click="Clear_Click" VerticalAlignment="Center" Margin="12,0,0,0"/>
                         </Grid>
                     </StackPanel>
                 </Border>
 
                 <TextBlock Style="{StaticResource Hint}" Margin="4,0,0,18">
-                    <Run Text="Клавиши в окне истории: ↑↓ выбор, Enter вставить, Shift+Enter без форматирования, Ctrl+1…9 быстрая вставка, Ctrl+C только копировать, Ctrl+P закрепить, Ctrl+H показать или скрыть секрет, Del удалить, Tab фильтр, правый клик — преобразования текста."/>
+                    <Run Text="{DynamicResource s.KeysHelp}"/>
                 </TextBlock>
             </StackPanel>
         </ScrollViewer>
 
         <Border Grid.Row="1" BorderBrush="{DynamicResource Stroke}" BorderThickness="0,1,0,0" Padding="24,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Style="{StaticResource SecondaryButton}" Content="Отмена" Click="Cancel_Click" Margin="0,0,8,0" IsCancel="True"/>
-                <Button Style="{StaticResource PrimaryButton}" Content="Сохранить" Click="Save_Click" IsDefault="True"/>
+                <Button Style="{StaticResource SecondaryButton}" Content="{DynamicResource s.Cancel}" Click="Cancel_Click" Margin="0,0,8,0" IsCancel="True"/>
+                <Button Style="{StaticResource PrimaryButton}" Content="{DynamicResource s.Save}" Click="Save_Click" IsDefault="True"/>
             </StackPanel>
         </Border>
     </Grid>

@@ -72,7 +72,7 @@ public static partial class SecretDetector
             if (!hasSep)
             {
                 // the separator came out as its own word, or there is none: then it isn't a label
-                if (j >= words.Count || words[j].Trim() is not (":" or "=")) continue;
+                if (j >= words.Count || words[j].Trim() is not (":" or "=" or "：")) continue;
                 j++;
             }
             if (j < words.Count && TrimPunct(words[j]).Length >= 3)
@@ -176,10 +176,10 @@ public static partial class SecretDetector
     [GeneratedRegex(@"^(sk-[A-Za-z0-9_\-]{20,}|sk-ant-[A-Za-z0-9_\-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_\w{40,}|glpat-[A-Za-z0-9_\-]{20,}|xox[abprs]-[A-Za-z0-9\-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_\-]{35}|\d{8,10}:[A-Za-z0-9_\-]{35}|eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}|npm_[A-Za-z0-9]{36}|pypi-[A-Za-z0-9_\-]{40,}|(sk|rk|pk)_(live|test)_[A-Za-z0-9]{16,}|hf_[A-Za-z0-9]{30,})$")]
     private static partial Regex KnownToken();
 
-    [GeneratedRegex(@"(?i)(парол[ьяи]|password|passwd|pass|pwd|secret|секрет|token|токен|api[_\- ]?key|ключ|pin|пин)\s*[:=]\s*\S{3,}")]
+    [GeneratedRegex(@"(?i)(парол[ьяи]|password|passwd|pass|pwd|secret|секрет|token|токен|api[_\- ]?key|ключ|pin|пин|密码|口令|密钥|令牌)\s*[:=：]\s*\S{3,}")]
     private static partial Regex LabeledSecret();
 
-    [GeneratedRegex(@"(?i)^(парол[ьяи]|password|passwd|pass|pwd|secret|секрет|token|токен|api[_\-]?key|apikey|ключ|pin|пин|пин-код)(?<sep>\s*[:=])?(?<rest>.*)$")]
+    [GeneratedRegex(@"(?i)^(парол[ьяи]|password|passwd|pass|pwd|secret|секрет|token|токен|api[_\-]?key|apikey|ключ|pin|пин|пин-код|密码|口令|密钥|令牌)(?<sep>\s*[:=：])?(?<rest>.*)$")]
     private static partial Regex LabelWord();
 
     [GeneratedRegex(@"['`’‘""]")]
@@ -195,7 +195,7 @@ public static partial class SecretDetector
     [GeneratedRegex(@"^[A-Za-z0-9_\-\.]+$")]
     private static partial Regex TokenPart();
 
-    [GeneratedRegex(@"(?i)^(карт[аыуе]|картой|card|карты:)$")]
+    [GeneratedRegex(@"(?i)^(карт[аыуе]|картой|card|карты:|卡号[:：]?|银行卡|信用卡)$")]
     private static partial Regex CardWord();
 
     [GeneratedRegex(@"^\d[\d \-]{11,21}\d$")]

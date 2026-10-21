@@ -52,7 +52,7 @@ public static class Secrets
     {
         if (stored is null || !stored.StartsWith(TextPrefix, StringComparison.Ordinal)) return stored;
         try { return Encoding.UTF8.GetString(Unprotect(Convert.FromBase64String(stored[TextPrefix.Length..]))); }
-        catch { return "[не удалось расшифровать]"; }
+        catch { return Loc.T("DecryptFailed"); }
     }
 
     /// <summary>Reads an image file, decrypting it if it is stored encrypted.</summary>
