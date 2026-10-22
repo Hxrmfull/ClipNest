@@ -21,25 +21,6 @@
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
-        <!-- Telegram-like spoiler dust: two tiled dot layers drifting in opposite directions.
-             All cards share two transforms, assigned in code on Loaded (anything a template references gets frozen),
-             so there are two animation clocks in total; each layer is rasterized once (BitmapCache) and only moved;
-             MainWindow runs them only while a secret is on screen (see UpdateDust). -->
-        <ControlTemplate x:Key="SpoilerDust" TargetType="Control">
-            <Grid ClipToBounds="True" IsHitTestVisible="False">
-                <Rectangle Fill="{DynamicResource DustBrush1}" Margin="0,0,-40,-40" Loaded="Dust1_Loaded">
-                    <Rectangle.CacheMode>
-                        <BitmapCache/>
-                    </Rectangle.CacheMode>
-                </Rectangle>
-                <Rectangle Fill="{DynamicResource DustBrush2}" Margin="-56,-56,0,0" Loaded="Dust2_Loaded" Opacity="0.75">
-                    <Rectangle.CacheMode>
-                        <BitmapCache/>
-                    </Rectangle.CacheMode>
-                </Rectangle>
-            </Grid>
-        </ControlTemplate>
-
         <DataTemplate x:Key="ClipTemplate" DataType="{x:Type m:ClipItem}">
             <Grid Margin="12,10,10,9">
                 <Grid.RowDefinitions>
@@ -72,18 +53,10 @@
                             </Style>
                         </TextBlock.Resources>
                     </TextBlock>
-                    <Grid x:Name="spoiler" Grid.Column="1" HorizontalAlignment="Left" Visibility="Collapsed" IsHitTestVisible="False">
-                        <TextBlock Text="{Binding SpoilerText}" TextWrapping="Wrap" MaxHeight="78" FontSize="13" LineHeight="19.5"
-                                   Foreground="{DynamicResource TextSecondary}" Opacity="0.6">
-                            <TextBlock.Effect>
-                                <BlurEffect Radius="6"/>
-                            </TextBlock.Effect>
-                            <TextBlock.CacheMode>
-                                <BitmapCache/>
-                            </TextBlock.CacheMode>
-                        </TextBlock>
-                        <Control Template="{StaticResource SpoilerDust}" Margin="-6,-3"/>
-                    </Grid>
+                    <!-- Telegram-style dust in the shape of made-up lines; the real text appears only once revealed -->
+                    <local:SpoilerView x:Name="spoiler" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Top" Visibility="Collapsed"
+                                       Text="{Binding SpoilerText}" FontSize="13" LineHeight="19.5" MaxHeight="78"
+                                       IsRevealed="{Binding Revealed}" Target="{Binding ElementName=text}"/>
                     <Border x:Name="imgHost" Grid.ColumnSpan="2" CornerRadius="8" HorizontalAlignment="Left"
                             Background="{DynamicResource Checker}" Visibility="Collapsed" Padding="0"
                             local:RoundedClip.Radius="8">
@@ -99,7 +72,7 @@
                                     </ToolTip>
                                 </Image.ToolTip>
                             </Image>
-                            <Control x:Name="imgDust" Template="{StaticResource SpoilerDust}" Visibility="Collapsed"/>
+                            <local:SpoilerView x:Name="imgDust" Visibility="Collapsed" IsRevealed="{Binding Revealed}"/>
                         </Grid>
                     </Border>
                 </Grid>
@@ -143,7 +116,6 @@
 
             <DataTemplate.Triggers>
                 <DataTrigger Binding="{Binding Secret}" Value="True">
-                    <Setter TargetName="text" Property="Opacity" Value="0"/>
                     <Setter TargetName="spoiler" Property="Visibility" Value="Visible"/>
                     <Setter TargetName="eyeBtn" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
@@ -177,24 +149,7 @@
                 <DataTrigger Binding="{Binding Revealed}" Value="True">
                     <Setter TargetName="eyeBtn" Property="Content" Value="&#xED1A;"/>
                     <Setter TargetName="eyeBtn" Property="ToolTip" Value="{DynamicResource s.HideTip}"/>
-                    <DataTrigger.EnterActions>
-                        <BeginStoryboard>
-                            <Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="text" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.35"/>
-                                <DoubleAnimation Storyboard.TargetName="spoiler" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.3"/>
-                                <DoubleAnimation Storyboard.TargetName="imgDust" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.3"/>
-                            </Storyboard>
-                        </BeginStoryboard>
-                    </DataTrigger.EnterActions>
-                    <DataTrigger.ExitActions>
-                        <BeginStoryboard>
-                            <Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="text" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15"/>
-                                <DoubleAnimation Storyboard.TargetName="spoiler" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.25"/>
-                                <DoubleAnimation Storyboard.TargetName="imgDust" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.25"/>
-                            </Storyboard>
-                        </BeginStoryboard>
-                    </DataTrigger.ExitActions>
+                    <!-- the text and the dust are animated by the SpoilerView: a circle growing from the mouse -->
                 </DataTrigger>
                 <!-- the blur animation only where there is a blur effect to animate -->
                 <MultiDataTrigger>

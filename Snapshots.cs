@@ -102,7 +102,7 @@ internal static class Snapshots
             };
             int[] scales = { 80, 90, 100, 110, 125 };
             var sizes = new (int w, int h)[] { (420, 600), (400, 380), (800, 500), (420, 1000), (1200, 900), (3000, 3000), (555, 665) };
-            string[] states = { "list", "images", "search", "empty", "sizing" };
+            string[] states = { "list", "images", "search", "empty", "sizing", "recycle" };
             var s = App.Settings;
             int cases = 0, badCases = 0;
             var noTab = new SortedSet<string>();
@@ -231,6 +231,107 @@ internal static class Snapshots
         }
     }
 
+    /// <summary>`--spoilerbench &lt;file&gt;`: what the spoiler animation costs. The popup is laid out off-screen as in
+    /// --layoutcheck (no focus) with its secrets in view; CPU is measured with the animation running, then stopped.</summary>
+    public static async void SpoilerBench(MainWindow popup, string file, int? x = null, int? y = null)
+    {
+        var sb = new StringBuilder();
+        try
+        {
+            popup.ShowForLayoutCheck(new Native.RECT { Right = 1920, Bottom = 1032 }, 1);
+            // on screen, if asked: off it Windows doesn't show the window and WPF skips the drawing as well
+            if (x is { } px && y is { } py)
+                Native.SetWindowPos(new System.Windows.Interop.WindowInteropHelper(popup).Handle, IntPtr.Zero, px, py, 0, 0,
+                    Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+            await Task.Delay(20000); // thumbnails, then .NET finishing its background (tiered) compilation
+            var on = new List<double>();
+            var off = new List<double>();
+            for (int i = 0; i < 4; i++) // interleaved, so a drift in the background load hits both alike
+            {
+                popup.SetBenchDust(true);
+                await Task.Delay(500);
+                var t0 = DateTime.Now;
+                on.Add((await Cpu(8000)).cpu);
+                sb.AppendLine($"phase on {t0:HH:mm:ss.fff} {DateTime.Now:HH:mm:ss.fff}");
+                popup.SetBenchDust(false);
+                await Task.Delay(500);
+                t0 = DateTime.Now;
+                off.Add((await Cpu(8000)).cpu);
+                sb.AppendLine($"phase off {t0:HH:mm:ss.fff} {DateTime.Now:HH:mm:ss.fff}");
+            }
+            sb.AppendLine($"spoiler animation running: cpu {string.Join(" / ", on.Select(c => c.ToString("0.0")))} % of one core, median {Median(on):0.0}");
+            sb.AppendLine($"spoiler animation stopped: cpu {string.Join(" / ", off.Select(c => c.ToString("0.0")))} % of one core, median {Median(off):0.0}");
+            sb.AppendLine($"dust frames made in {SpoilerMess.MakeMs:0} ms (both kinds, in the background)");
+            sb.AppendLine($"secrets in the list: {Descendants(popup.List).OfType<System.Windows.Controls.ListBoxItem>().Count(i => i.DataContext is Models.ClipItem { Secret: true })}");
+            popup.HidePopup();
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine("spoiler bench failed: " + ex);
+        }
+        finally
+        {
+            File.WriteAllText(file, sb.ToString());
+            App.Current.Quit();
+        }
+    }
+
+    /// <summary>`--spoilergif &lt;dir&gt;`: frames of the popup, off-screen, every 33 ms: two seconds of the spoiler dust,
+    /// then the first secret being revealed. Put together into a GIF outside.</summary>
+    public static async void SpoilerFrames(MainWindow popup, string dir)
+    {
+        try
+        {
+            Directory.CreateDirectory(dir);
+            popup.ShowForLayoutCheck(new Native.RECT { Right = 1920, Bottom = 1032 }, 1);
+            await Task.Delay(2500); // the dust frames are made in the background
+            await Settle(popup);
+            var sw = Stopwatch.StartNew();
+            for (int i = 0; i < 150; i++)
+            {
+                if (i == 60) popup.RevealFirstSecret();
+                if (i == 90) popup.FImages.IsChecked = true; // the secret images
+                if (i == 125) popup.RevealFirstSecret();
+                Save(popup.Root, Path.Combine(dir, $"f{i:000}.png"), Color.FromRgb(0x20, 0x20, 0x24), 1);
+                var next = (i + 1) * 33;
+                var wait = next - (int)sw.ElapsedMilliseconds;
+                if (wait > 0) await Task.Delay(wait);
+            }
+            File.WriteAllText(Path.Combine(dir, "timing.txt"), $"150 frames in {sw.ElapsedMilliseconds} ms");
+            popup.HidePopup();
+        }
+        catch (Exception ex)
+        {
+            File.WriteAllText(Path.Combine(dir, "error.txt"), ex.ToString());
+        }
+        finally
+        {
+            App.Current.Quit();
+        }
+    }
+
+    /// <summary>`--readmeshot &lt;file&gt;`: the popup for the README, laid out off-screen as in --layoutcheck (no focus,
+    /// nothing of the screen) and drawn at twice the size.</summary>
+    public static async void ReadmeShot(MainWindow popup, string file)
+    {
+        try
+        {
+            popup.ShowForLayoutCheck(new Native.RECT { Right = 1920, Bottom = 1032 }, 1);
+            await Task.Delay(900); // thumbnails decode in the background
+            await Settle(popup);
+            Save(popup.Root, file, Colors.Transparent, 2);
+            popup.HidePopup();
+        }
+        catch (Exception ex)
+        {
+            File.WriteAllText(file + ".error.txt", ex.ToString());
+        }
+        finally
+        {
+            App.Current.Quit();
+        }
+    }
+
     private static async Task SetState(MainWindow p, string state)
     {
         p.Search.Text = "";
@@ -244,6 +345,11 @@ internal static class Snapshots
                 p.PausedBadge.Visibility = Visibility.Visible;
                 break;
             case "empty": p.Search.Text = "zzzzqqqq"; break;
+            case "recycle":
+                // scrolled down, the secrets' cards are reused for ordinary texts further on: those must show
+                await Task.Delay(700);
+                Descendants(p.List).OfType<System.Windows.Controls.ScrollViewer>().First().ScrollToVerticalOffset(1500);
+                break;
             case "sizing":
                 p.SizingOverlay.Visibility = Visibility.Visible;
                 break;
@@ -338,6 +444,16 @@ internal static class Snapshots
                 if (r.Width < 0.5) continue;
                 if (r.Right > card.Right + 0.5 || r.Left < card.Left - 0.5)
                     found.Add($"sticks out of its card by {Math.Max(r.Right - card.Right, card.Left - r.Left):0.#} px: {Describe(fe)}");
+            }
+            // cards are reused from item to item: an ordinary text must never keep the hiding of a spoiler shown there before
+            if (item.DataContext is Models.ClipItem { IsImage: false } ti
+                && Descendants(item).OfType<System.Windows.Controls.TextBlock>().FirstOrDefault(t => t.Name == "text") is { } tb)
+            {
+                bool hidden = ti.IsHidden;
+                if (!hidden && (tb.Opacity < 0.99 || tb.OpacityMask is not null) && !tb.HasAnimatedProperties)
+                    found.Add($"an ordinary card's text is hidden (opacity {tb.Opacity:0.##}{(tb.OpacityMask is null ? "" : ", masked")}): {Describe(tb)}");
+                if (hidden && tb.Opacity > 0.01)
+                    found.Add($"a hidden secret's text shows (opacity {tb.Opacity:0.##})");
             }
             if (item.DataContext is Models.ClipItem { IsImage: true } ci)
             {

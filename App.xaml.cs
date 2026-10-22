@@ -156,6 +156,29 @@ public partial class App : Application
             return;
         }
 
+        var sbn = Array.IndexOf(e.Args, "--spoilerbench");
+        if (sbn >= 0 && sbn + 1 < e.Args.Length)
+        {
+            int? bx = sbn + 3 < e.Args.Length && int.TryParse(e.Args[sbn + 2], out var vx) ? vx : null;
+            int? by = sbn + 3 < e.Args.Length && int.TryParse(e.Args[sbn + 3], out var vy) ? vy : null;
+            Snapshots.SpoilerBench(_popup, e.Args[sbn + 1], bx, by);
+            return;
+        }
+
+        var sg = Array.IndexOf(e.Args, "--spoilergif");
+        if (sg >= 0 && sg + 1 < e.Args.Length)
+        {
+            Snapshots.SpoilerFrames(_popup, e.Args[sg + 1]);
+            return;
+        }
+
+        var rs = Array.IndexOf(e.Args, "--readmeshot");
+        if (rs >= 0 && rs + 1 < e.Args.Length)
+        {
+            Snapshots.ReadmeShot(_popup, e.Args[rs + 1]);
+            return;
+        }
+
         var snap = Array.IndexOf(e.Args, "--snapshot");
         if (snap >= 0 && snap + 1 < e.Args.Length)
         {

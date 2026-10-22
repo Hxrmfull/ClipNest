@@ -40,6 +40,7 @@ public static class Theme
         SetBrush("AccentText", IsDark ? Lighten(accent, 0.35) : Darken(accent, 0.15));
 
         foreach (Window w in Application.Current.Windows) ApplyTitleBar(w);
+        SpoilerMess.ThemeChanged();
     }
 
     private static void SetBrush(string key, Color c)

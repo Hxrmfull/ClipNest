@@ -268,42 +268,20 @@ public partial class MainWindow : Window
         }
     }
 
-    private bool _dustRunning;
-    private readonly TranslateTransform _dust1 = new(), _dust2 = new();
+    private bool _benchNoDust;
 
-    /// <summary>Runs the two shared spoiler-dust clocks only while a secret is in the list and the window is shown.
-    /// A running animation keeps WPF's render loop ticking, even for a hidden window.</summary>
+    /// <summary>For --spoilerbench: the same popup with its spoiler animation stopped.</summary>
+    internal void SetBenchDust(bool on)
+    {
+        _benchNoDust = !on;
+        UpdateDust();
+    }
+    /// <summary>Runs the spoiler dust (<see cref="SpoilerMess"/>) only while a secret is in the list and the window is
+    /// shown: then it switches the shared dust frame 30 times a second; otherwise nothing ticks.</summary>
     private void UpdateDust()
     {
-        bool want = IsVisible && _items.Any(i => i.Secret);
-        if (want == _dustRunning) return;
-        _dustRunning = want;
-        TranslateTransform t1 = _dust1, t2 = _dust2;
-        if (want)
-        {
-            Drift(t1, TranslateTransform.XProperty, 0, -40, 3.2);
-            Drift(t1, TranslateTransform.YProperty, 0, -40, 4.6);
-            Drift(t2, TranslateTransform.XProperty, 0, 56, 5.0);
-            Drift(t2, TranslateTransform.YProperty, 0, 56, 3.8);
-        }
-        else
-        {
-            foreach (var t in new[] { t1, t2 })
-            {
-                t.BeginAnimation(TranslateTransform.XProperty, null);
-                t.BeginAnimation(TranslateTransform.YProperty, null);
-            }
-        }
-    }
-
-    private void Dust1_Loaded(object sender, RoutedEventArgs e) => ((UIElement)sender).RenderTransform = _dust1;
-    private void Dust2_Loaded(object sender, RoutedEventArgs e) => ((UIElement)sender).RenderTransform = _dust2;
-
-    private static void Drift(TranslateTransform t, DependencyProperty p, double from, double to, double seconds)
-    {
-        var a = new DoubleAnimation(from, to, TimeSpan.FromSeconds(seconds)) { RepeatBehavior = RepeatBehavior.Forever };
-        Timeline.SetDesiredFrameRate(a, 24); // a slow drift; 24 fps is plenty and halves the render-loop cost of 60
-        t.BeginAnimation(p, a);
+        bool want = IsVisible && !_benchNoDust && _items.Any(i => i.Secret);
+        SpoilerMess.Run(want, VisualTreeHelper.GetDpi(this).DpiScaleX * _appliedScale);
     }
 
     public void UpdatePausedState() =>
