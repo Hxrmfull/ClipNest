@@ -69,6 +69,12 @@ public partial class SettingsWindow : Window
         }
         if (!App.Hook.IsInstalled) ReplaceWinV.IsEnabled = false;
         UpdateStats();
+        VersionText.Text = Loc.F("Version", Updater.Current.ToString(3));
+        if (App.UpdatedFrom is { } from)
+        {
+            UpdateHint.Text = Loc.F("UpdateDone", from, Updater.Current.ToString(3));
+            App.UpdatedFrom = null;
+        }
     }
 
     private void UpdateStats() =>
@@ -143,6 +149,53 @@ public partial class SettingsWindow : Window
         App.Settings.PopupHeight = 600;
         App.Settings.Save();
         SizeHint.Text = Loc.T("SizeWasReset");
+    }
+
+    private UpdateInfo? _update;
+    private bool _updating;
+
+    /// <summary>First a check; with a newer release found, the same button downloads it in the background (showing how
+    /// far it got) and ClipNest restarts into it, back in this window.</summary>
+    private async void Update_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updating) return;
+        _updating = true;
+        UpdateButton.IsEnabled = false;
+        try
+        {
+            if (_update is null)
+            {
+                UpdateButton.Content = Loc.T("UpdateChecking");
+                _update = await Updater.CheckAsync();
+                UpdateHint.Text = _update is null ? Loc.T("UpdateNone") : Loc.F("UpdateAvailable", _update.Version.ToString(3));
+                ShowUpdateButton();
+                return;
+            }
+            UpdateButton.Content = Loc.F("UpdateDownloading", 0);
+            var progress = new Progress<double>(p => UpdateButton.Content = Loc.F("UpdateDownloading", (int)(p * 100)));
+            await Updater.InstallAsync(_update, progress);
+            UpdateButton.Content = Loc.T("UpdateInstalling");
+            if (App.Current.Popup.IsSizing) App.Current.Popup.EndSizing(false);
+            App.Current.RestartAfterUpdate(showSettings: true);
+        }
+        catch (Exception ex)
+        {
+            Log.Write("update: " + ex);
+            var reason = ex is UpdateException ? ex.Message : ex.Message.TrimEnd('.') + ".";
+            UpdateHint.Text = Loc.F(_update is null ? "UpdateCheckFailed" : "UpdateFailed", reason);
+            ShowUpdateButton();
+        }
+        finally
+        {
+            _updating = false;
+            UpdateButton.IsEnabled = true;
+        }
+    }
+
+    private void ShowUpdateButton()
+    {
+        if (_update is null) UpdateButton.SetResourceReference(ContentControl.ContentProperty, "s.UpdateCheck");
+        else UpdateButton.Content = Loc.F("UpdateInstall", _update.Version.ToString(3));
     }
 
     private void ApplyForm()

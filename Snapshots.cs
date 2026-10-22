@@ -200,8 +200,9 @@ internal static class Snapshots
                     var found = new List<string>();
                     CutOff(content, found);
                     var win = new Rect(0, 0, content.ActualWidth, content.ActualHeight);
-                    foreach (var e in new FrameworkElement[] { sw.Size80, sw.Size125, sw.ResetSize, sw.SizeByMouse, sw.SizeHint, sw.LangRu, sw.LangZh })
-                        if (!Inflate(win).Contains(Bounds(e, content))) found.Add($"outside the window: {Describe(e)}");
+                    // the settings scroll: below the window is fine, only nothing may stick out to a side
+                    foreach (var e in new FrameworkElement[] { sw.Size80, sw.Size125, sw.ResetSize, sw.SizeByMouse, sw.SizeHint, sw.LangRu, sw.LangZh, sw.UpdateButton, sw.UpdateHint })
+                        if (Bounds(e, content) is var eb && (eb.Left < -1 || eb.Right > win.Right + 1)) found.Add($"sticks out to a side: {Describe(e)}");
                     cases++;
                     string label = $"{lang} {theme} settings {width} wide{(sizing ? ", sizing" : "")}";
                     if (found.Count > 0)
@@ -211,6 +212,13 @@ internal static class Snapshots
                         foreach (var f in found.Distinct()) report.AppendLine("       " + f);
                     }
                     Save(content, Path.Combine(dir, $"{lang}-{theme}-settings-{width}{(sizing ? "-sizing" : "")}.png"), ((SolidColorBrush)sw.Background).Color, 1);
+                    if (!sizing)
+                    {
+                        Descendants(content).OfType<System.Windows.Controls.ScrollViewer>().First().ScrollToEnd();
+                        sw.UpdateLayout();
+                        await Task.Delay(100);
+                        Save(content, Path.Combine(dir, $"{lang}-{theme}-settings-{width}-end.png"), ((SolidColorBrush)sw.Background).Color, 1);
+                    }
                     sw.Close();
                 }
             }

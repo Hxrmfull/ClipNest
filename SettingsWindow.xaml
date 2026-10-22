@@ -262,6 +262,22 @@
                     </StackPanel>
                 </Border>
 
+                <TextBlock Text="{DynamicResource s.UpdatesSection}" Style="{StaticResource SectionTitle}"/>
+                <Border Style="{StaticResource Card}">
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock x:Name="VersionText" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="UpdateHint" Style="{StaticResource Hint}" Text="{DynamicResource s.UpdateHint}"/>
+                        </StackPanel>
+                        <Button x:Name="UpdateButton" Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="{DynamicResource s.UpdateCheck}"
+                                Click="Update_Click" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                    </Grid>
+                </Border>
+
                 <TextBlock Style="{StaticResource Hint}" Margin="4,0,0,18">
                     <Run Text="{DynamicResource s.KeysHelp}"/>
                 </TextBlock>

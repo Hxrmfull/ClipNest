@@ -33,6 +33,8 @@ public partial class App : Application
     public static ClipboardMonitor Monitor { get; private set; } = null!;
     public static KeyboardHook Hook { get; private set; } = null!;
     public static new App Current => (App)Application.Current;
+    /// <summary>The version this start was updated from (--updated), shown once in the settings.</summary>
+    public static string? UpdatedFrom { get; set; }
 
     private MainWindow _popup = null!;
 
@@ -73,6 +75,7 @@ public partial class App : Application
         Directory.CreateDirectory(dataDir);
         Log.FilePath = Path.Combine(dataDir, "clipnest.log");
         DataLocation.RestrictToCurrentUser(dataDir);
+        Updater.CleanUp(); // the exe an update set aside
         DispatcherUnhandledException += (_, ex) =>
         {
             Log.Write("unhandled: " + ex.Exception);
@@ -186,7 +189,20 @@ public partial class App : Application
             return;
         }
 
-        if (!Settings.ShownWelcome)
+        if (e.Args.Contains("--update-now"))
+        {
+            UpdateNow(); // dev and test path of the settings button, without the window
+            return;
+        }
+
+        var upd = Array.IndexOf(e.Args, "--updated");
+        if (upd >= 0 && upd + 1 < e.Args.Length) UpdatedFrom = e.Args[upd + 1];
+
+        if (UpdatedFrom is not null && !e.Args.Contains("--tray"))
+        {
+            OpenSettings(); // the update was started there: back to it, now showing what was installed
+        }
+        else if (!Settings.ShownWelcome)
         {
             Settings.ShownWelcome = true;
             Settings.Save();
@@ -356,6 +372,45 @@ public partial class App : Application
                 "ClipNest", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         Restart("--settings");
+    }
+
+    /// <summary>The exe has just been replaced by a newer one (<see cref="Updater.InstallAsync"/>): hand over to it at once.
+    /// The data is closed first, as for a move of the data folder, so the new copy finds it free.</summary>
+    public void RestartAfterUpdate(bool showSettings)
+    {
+        var from = Updater.Current.ToString(3);
+        Settings.Save();
+        _popup.HidePopup();
+        StopPruning();
+        Monitor.ItemCaptured -= _popup.OnItemCaptured;
+        Hook.Dispose();
+        Monitor.Dispose();
+        Storage.Dispose();
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        Log.Write($"updated from {from}, restarting");
+        Restart(showSettings ? $"--updated {from}" : $"--updated {from} --tray");
+    }
+
+    private async void UpdateNow()
+    {
+        try
+        {
+            var update = await Updater.CheckAsync();
+            if (update is null)
+            {
+                Log.Write("update-now: this is the latest version");
+                Quit();
+                return;
+            }
+            await Updater.InstallAsync(update, null);
+            Log.Write($"update-now: {update.Version} installed");
+            RestartAfterUpdate(showSettings: false);
+        }
+        catch (Exception ex)
+        {
+            Log.Write("update-now: " + ex.Message);
+            Quit();
+        }
     }
 
     private void Restart(string args)

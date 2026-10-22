@@ -31,7 +31,8 @@ Run the exe: ClipNest goes to the tray and starts with Windows from then on.
 
 ## Usage
 
-Press Win+V, type to search, press Enter to paste. The settings are behind the gear in the window or in the tray icon's menu.
+Press Win+V, type to search, press Enter to paste. The settings are behind the gear in the window or in the tray icon's menu;
+updates are installed from there too (Updates → Check for updates).
 
 | Key | Action |
 |---|---|
