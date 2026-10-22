@@ -18,12 +18,13 @@
 
 ## Установка
 
-Выберите одну из двух версий (данные у них общие, переходить можно в любой момент):
+Скачайте одну из двух версий в [Releases](https://github.com/Hxrmfull/ClipNest/releases/latest)
+(данные у них общие, переходить можно в любой момент):
 
 | Версия | Файл | Размер |
 |---|---|---|
-| Обычная | `publish/ClipNest.exe` | ~3 МБ |
-| С OCR: ищет секреты и на картинках | `publish-ocr/ClipNest.exe` | ~29 МБ |
+| Обычная | `ClipNest.exe` | ~3 МБ |
+| С OCR: ищет секреты и на картинках | `ClipNest-OCR.exe` | ~29 МБ |
 
 Нужны Windows 10 или 11 (64-бит) и [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0).
 Запустите exe: ClipNest появится в трее и дальше будет запускаться вместе с Windows.

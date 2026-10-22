@@ -18,12 +18,13 @@ Clipboard history for Windows without limits: a replacement for the built-in Win
 
 ## Installation
 
-Pick one of the two editions (they share their data, so you can switch at any time):
+Download one of the two editions from [Releases](https://github.com/Hxrmfull/ClipNest/releases/latest)
+(they share their data, so you can switch at any time):
 
 | Edition | File | Size |
 |---|---|---|
-| Standard | `publish/ClipNest.exe` | ~3 MB |
-| With OCR: also finds secrets on images | `publish-ocr/ClipNest.exe` | ~29 MB |
+| Standard | `ClipNest.exe` | ~3 MB |
+| With OCR: also finds secrets on images | `ClipNest-OCR.exe` | ~29 MB |
 
 Requires Windows 10 or 11 (64-bit) and the [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0).
 Run the exe: ClipNest goes to the tray and starts with Windows from then on.
