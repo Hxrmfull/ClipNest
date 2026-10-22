@@ -20,7 +20,7 @@
     <ApplicationIcon>Assets\clipnest.ico</ApplicationIcon>
     <Version>1.0.0</Version>
     <Product>ClipNest</Product>
-    <Description>Менеджер буфера обмена без лимитов</Description>
+    <Description>Clipboard history for Windows without limits: a Win+V replacement</Description>
     <SatelliteResourceLanguages>ru;en</SatelliteResourceLanguages>
     <NoWarn>$(NoWarn);WFAC010</NoWarn>
     <!-- precompiled code: no JIT pause on the first Win+V after startup -->
