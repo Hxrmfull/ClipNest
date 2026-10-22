@@ -27,6 +27,7 @@
 | С OCR: ищет секреты и на картинках | `ClipNest-OCR.exe` | ~29 МБ |
 
 Нужны Windows 10 или 11 (64-бит) и [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0).
+При первом запуске ClipNest предложит перенести себя в `%LOCALAPPDATA%\Programs\ClipNest` и добавить в меню «Пуск».
 Запустите exe: ClipNest появится в трее и дальше будет запускаться вместе с Windows.
 
 ## Использование

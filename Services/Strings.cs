@@ -206,6 +206,17 @@ public static class Strings
         ("WelcomeTray", "Откройте историю через значок в трее.", "Open the history from the tray icon.", "通过托盘图标打开历史记录。"),
         ("MoveFailed", "Не удалось перенести данные в «{0}»:\n{1}\n\nИстория осталась в «{2}».",
             "Couldn't move the data to “{0}”:\n{1}\n\nThe history stayed in “{2}”.", "无法将数据移到“{0}”：\n{1}\n\n历史记录仍在“{2}”中。"),
+
+        // --- moving to the program folder (Installer)
+        ("InstallTitle", "Установить ClipNest?", "Install ClipNest?", "安装 ClipNest？"),
+        ("InstallText", "ClipNest переместится в папку программ и появится в меню «Пуск». История и настройки останутся на месте.",
+            "ClipNest will move to your programs folder and appear in the Start menu. The history and settings stay where they are.",
+            "ClipNest 将移到程序文件夹，并出现在“开始”菜单中。历史记录和设置保持不变。"),
+        ("InstallYes", "Установить", "Install", "安装"),
+        ("InstallKeep", "Оставить здесь", "Keep it here", "保留在此处"),
+        ("InstallFailed", "Не удалось установить ClipNest в «{0}»:\n{1}\n\nClipNest продолжит работать из текущей папки.",
+            "Couldn't install ClipNest to “{0}”:\n{1}\n\nClipNest keeps running from its current folder.",
+            "无法将 ClipNest 安装到“{0}”：\n{1}\n\nClipNest 将继续从当前文件夹运行。"),
     };
 
     private static readonly Dictionary<string, Dictionary<string, string>> ByLanguage = new()

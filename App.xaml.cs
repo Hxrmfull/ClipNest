@@ -76,6 +76,8 @@ public partial class App : Application
         Log.FilePath = Path.Combine(dataDir, "clipnest.log");
         DataLocation.RestrictToCurrentUser(dataDir);
         Updater.CleanUp(); // the exe an update set aside
+        var inst = Array.IndexOf(e.Args, "--installed");
+        if (inst >= 0 && inst + 1 < e.Args.Length) Installer.RemoveOld(e.Args[inst + 1]); // the file this copy was moved from
         DispatcherUnhandledException += (_, ex) =>
         {
             Log.Write("unhandled: " + ex.Exception);
@@ -91,6 +93,7 @@ public partial class App : Application
         }
         Loc.Apply(Settings.Language);
         Theme.Apply(Settings.Theme);
+        if (OfferInstall(e.Args)) return; // moved to the program folder: the copy there carries on
 
         Secrets.Init(dataDir);
         Storage = new Storage(dataDir);
@@ -413,14 +416,65 @@ public partial class App : Application
         }
     }
 
-    private void Restart(string args)
+    /// <summary>At a start from outside the program folder: asks once whether to move ClipNest there and does it
+    /// (<see cref="Installer"/>). Runs before the history is opened, so there is nothing to close. True when this copy
+    /// has handed over to the moved one.</summary>
+    private bool OfferInstall(string[] args)
+    {
+        if (Environment.ProcessPath is not { } exe) return false;
+        bool now = args.Contains("--install-now"); // dev and test path of «Установить», without the window
+        if (!now)
+        {
+            // only when the user is there to answer: not at autostart (--tray), not in a dev run
+            if (args.Any(a => a.StartsWith("--") && a is not ("--settings" or "--updated"))) return false;
+            if (!Installer.ShouldOffer(exe, Installer.Dir, Settings.DeclinedInstall, DataLocation.IsPortable,
+                    Installer.InstalledVersion(), Updater.Current)) return false;
+            if (new InstallWindow(Installer.Dir).ShowDialog() != true)
+            {
+                Settings.DeclinedInstall = exe;
+                Settings.Save();
+                Log.Write("install declined, staying in " + exe);
+                return false;
+            }
+        }
+
+        string target;
+        try
+        {
+            target = Installer.Install(exe, Loc.T("Tagline"));
+        }
+        catch (Exception ex)
+        {
+            Log.Write("install: " + ex);
+            if (now)
+            {
+                Shutdown();
+                return true;
+            }
+            MessageBox.Show(Loc.F("InstallFailed", Installer.Dir, ex.Message), "ClipNest", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+        Log.Write($"installed to {target}, restarting from there");
+        // the same start (--settings, --updated) from the new place, which then deletes this file
+        var rest = args.Where(a => a != "--install-now").Append("--installed").Append($"\"{exe}\"");
+        Restart(target, string.Join(' ', rest));
+        return true;
+    }
+
+    private void Restart(string args) => Restart(Environment.ProcessPath, args);
+
+    private void Restart(string? exe, string args)
     {
         if (_tray is not null) { _tray.Visible = false; _tray.Dispose(); _tray = null; }
         // the new copy must not find our single-instance mutex
         try { _mutex?.ReleaseMutex(); } catch { }
         _mutex?.Dispose();
         _mutex = null;
-        try { if (Environment.ProcessPath is { } exe) Process.Start(exe, args); }
+        try
+        {
+            // started in its own folder: the old one must not stay held as the current directory
+            if (exe is not null) Process.Start(new ProcessStartInfo(exe, args) { WorkingDirectory = Path.GetDirectoryName(exe) });
+        }
         catch (Exception ex) { Log.Write("restart: " + ex.Message); }
         Shutdown();
     }

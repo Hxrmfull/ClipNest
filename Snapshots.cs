@@ -222,6 +222,34 @@ internal static class Snapshots
                     sw.Close();
                 }
             }
+            // the install question at a start from elsewhere, with a long user name in the folder
+            foreach (var (mode, theme) in new[] { (ThemeMode.Dark, "dark"), (ThemeMode.Light, "light") })
+            {
+                Theme.Apply(mode);
+                var iw = new InstallWindow(@"C:\Users\Александра Константинопольская\AppData\Local\Programs\ClipNest")
+                {
+                    ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -12000, Top = -12000,
+                };
+                iw.Show();
+                await Task.Delay(200);
+                iw.UpdateLayout();
+                var content = (FrameworkElement)iw.Content;
+                var found = new List<string>();
+                CutOff(content, found);
+                var win = new Rect(0, 0, content.ActualWidth, content.ActualHeight);
+                foreach (var e in new FrameworkElement[] { iw.Folder, iw.KeepButton, iw.InstallButton })
+                    if (Bounds(e, content) is var eb && (eb.Left < -1 || eb.Right > win.Right + 1 || eb.Bottom > win.Bottom + 1))
+                        found.Add($"outside the window: {Describe(e)}");
+                cases++;
+                if (found.Count > 0)
+                {
+                    badCases++;
+                    report.AppendLine($"BAD  {lang} {theme} install question");
+                    foreach (var f in found.Distinct()) report.AppendLine("       " + f);
+                }
+                Save(content, Path.Combine(dir, $"{lang}-{theme}-install.png"), ((SolidColorBrush)iw.Background).Color, 1);
+                iw.Close();
+            }
             }
             report.Insert(0, $"layouts checked: {cases}, with problems: {badCases}{Environment.NewLine}"
                 + $"layout after making the list narrower (cards re-laid out): median {(narrowing.Count > 0 ? Median(narrowing) : 0):0.0} ms, max {(narrowing.Count > 0 ? narrowing.Max() : 0):0.0} ms over {narrowing.Count}{Environment.NewLine}"

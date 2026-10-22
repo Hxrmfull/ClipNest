@@ -27,6 +27,7 @@ Download one of the two editions from [Releases](https://github.com/Hxrmfull/Cli
 | With OCR: also finds secrets on images | `ClipNest-OCR.exe` | ~29 MB |
 
 Requires Windows 10 or 11 (64-bit) and the [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0).
+On the first start ClipNest offers to move itself to `%LOCALAPPDATA%\Programs\ClipNest` and add itself to the Start menu.
 Run the exe: ClipNest goes to the tray and starts with Windows from then on.
 
 ## Usage

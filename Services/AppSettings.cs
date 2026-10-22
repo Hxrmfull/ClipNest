@@ -48,6 +48,9 @@ public sealed class AppSettings
     };
 
     public bool ShownWelcome { get; set; }
+    /// <summary>The exe the user chose to keep running from instead of moving it to the program folder
+    /// (<see cref="Installer"/>); not asked again for that file.</summary>
+    public string? DeclinedInstall { get; set; }
 
     [System.Text.Json.Serialization.JsonIgnore]
     public string FilePath { get; private set; } = "";
